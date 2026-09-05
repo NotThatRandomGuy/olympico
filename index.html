@@ -119,6 +119,7 @@
 
   <script type="module">
     import * as THREE from 'three';
+    import * as CANNON from 'cannon-es';
 
     const canvas = document.querySelector('#game');
     const scene = new THREE.Scene();
@@ -180,11 +181,209 @@
     for (let i = 0; i < positions.length; i += 3) { positions[i] = (Math.random()-.5)*180; positions[i+1] = 20+Math.random()*80; positions[i+2]=(Math.random()-.5)*180; }
     stars.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); scene.add(stars);
 
-    let phase = 0;
+    const physics = new CANNON.World({ gravity: new CANNON.Vec3(0, -22, 0), allowSleep: true });
+    physics.broadphase = new CANNON.SAPBroadphase(physics);
+    physics.solver.iterations = 10;
+    physics.defaultContactMaterial.friction = .16;
+    physics.defaultContactMaterial.restitution = .08;
+    const floorBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
+    floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    physics.addBody(floorBody);
+
+    const input = {
+      throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0,
+      boost: false, handbrake: false, jumpQueued: false,
+      keys: new Set(), spaceStarted: 0, cameraToggleQueued: false,
+      poll() {
+        const gp = navigator.getGamepads?.()[0];
+        const dz = v => Math.abs(v) < .13 ? 0 : v;
+        const keyThrottle = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+        const keySteer = (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0) - (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0);
+        this.throttle = gp ? Math.abs(dz(gp.axes[1])) > Math.abs(keyThrottle) ? -dz(gp.axes[1]) : keyThrottle : keyThrottle;
+        this.steer = gp ? Math.abs(dz(gp.axes[0])) > Math.abs(keySteer) ? -dz(gp.axes[0]) : keySteer : keySteer;
+        this.boost = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || !!gp?.buttons[5]?.pressed;
+        this.handbrake = this.keys.has('Space') || !!gp?.buttons[1]?.pressed;
+        this.pitch = this.throttle;
+        this.yaw = this.steer;
+        this.roll = this.handbrake ? this.steer : (gp ? dz(gp.axes[2] || 0) : 0);
+        if (gp?.buttons[0]?.pressed && !this.gpJumpHeld) this.jumpQueued = true;
+        this.gpJumpHeld = !!gp?.buttons[0]?.pressed;
+        if (gp?.buttons[10]?.pressed && !this.gpCamHeld) this.cameraToggleQueued = true;
+        this.gpCamHeld = !!gp?.buttons[10]?.pressed;
+      }
+    };
+    addEventListener('keydown', e => {
+      if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+      input.keys.add(e.code);
+      if ((e.code === 'KeyJ' || e.code === 'Numpad0') && !e.repeat) input.jumpQueued = true;
+      if (e.code === 'Space' && !e.repeat) input.spaceStarted = performance.now();
+      if (e.code === 'KeyC' && !e.repeat) input.cameraToggleQueued = true;
+    });
+    addEventListener('keyup', e => {
+      input.keys.delete(e.code);
+      if (e.code === 'Space' && performance.now() - input.spaceStarted < 190) input.cameraToggleQueued = true;
+    });
+    canvas.addEventListener('mousedown', e => { if (e.button === 0 && game.active) input.jumpQueued = true; });
+
+    function makeCarVisual(color = 0x16a8ff) {
+      const root = new THREE.Group();
+      const paint = new THREE.MeshStandardMaterial({ color, metalness: .62, roughness: .24 });
+      const trim = new THREE.MeshStandardMaterial({ color: 0x09121d, metalness: .75, roughness: .3 });
+      const glass = new THREE.MeshStandardMaterial({ color: 0x84d8ff, metalness: .65, roughness: .12, transparent: true, opacity: .78 });
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(2.65, .72, 4.25), paint); lower.position.y = .08; lower.castShadow = true; root.add(lower);
+      const hood = new THREE.Mesh(new THREE.BoxGeometry(2.48, .33, 1.25), paint); hood.position.set(0,.56,-1.18); hood.rotation.x = -.08; hood.castShadow = true; root.add(hood);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.14, .78, 1.72), glass); cabin.position.set(0,.8,.22); cabin.rotation.x = -.04; cabin.castShadow = true; root.add(cabin);
+      const spoiler = new THREE.Mesh(new THREE.BoxGeometry(2.75,.14,.48), trim); spoiler.position.set(0,.72,1.88); root.add(spoiler);
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.72,.28,.22), trim); bumper.position.set(0,-.2,-2.14); root.add(bumper);
+      const wheels = [];
+      const wheelGeo = new THREE.CylinderGeometry(.53,.53,.34,18); wheelGeo.rotateZ(Math.PI/2);
+      for (const x of [-1.38,1.38]) for (const z of [-1.36,1.36]) {
+        const pivot = new THREE.Group(); pivot.position.set(x,-.42,z);
+        const wheel = new THREE.Mesh(wheelGeo, trim); wheel.castShadow = true; pivot.add(wheel); root.add(pivot); wheels.push({ pivot, wheel, front: z < 0 });
+      }
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(.25, 1.8, 8), new THREE.MeshBasicMaterial({ color: 0x62e7ff, transparent: true, opacity: .88, blending: THREE.AdditiveBlending }));
+      flame.rotation.x = Math.PI / 2; flame.position.set(0,0,2.92); flame.visible = false; root.add(flame);
+      return { root, wheels, flame, paint, trim, glass };
+    }
+
+    class ArcadeCar {
+      constructor() {
+        this.body = new CANNON.Body({
+          mass: 820,
+          shape: new CANNON.Box(new CANNON.Vec3(1.32,.62,2.12)),
+          linearDamping: .07,
+          angularDamping: .34,
+          position: new CANNON.Vec3(0, 1.2, 28)
+        });
+        this.body.quaternion.setFromEuler(0, 0, 0);
+        physics.addBody(this.body);
+        this.visual = makeCarVisual();
+        scene.add(this.visual.root);
+        this.boost = 100;
+        this.grounded = false;
+        this.airStart = 0;
+        this.jumps = 0;
+        this.wheelSpin = 0;
+        this.jumpLatch = false;
+      }
+      reset(x=0,z=28,yaw=0) {
+        this.body.position.set(x,1.2,z); this.body.velocity.setZero(); this.body.angularVelocity.setZero(); this.body.force.setZero(); this.body.torque.setZero();
+        this.body.quaternion.setFromEuler(0,yaw,0); this.boost = game.training ? 100 : Math.max(this.boost, 33); this.jumps = 0;
+      }
+      fixedUpdate(dt) {
+        const b = this.body;
+        const forward = b.quaternion.vmult(new CANNON.Vec3(0,0,-1));
+        const right = b.quaternion.vmult(new CANNON.Vec3(1,0,0));
+        const up = b.quaternion.vmult(new CANNON.Vec3(0,1,0));
+        const ray = new CANNON.RaycastResult();
+        physics.raycastClosest(b.position, new CANNON.Vec3(b.position.x,b.position.y-1.15,b.position.z), { skipBackfaces: true }, ray);
+        const wasGrounded = this.grounded;
+        this.grounded = ray.hasHit && ray.body === floorBody && up.y > .3;
+        if (this.grounded && !wasGrounded) this.jumps = 0;
+        if (!this.grounded && wasGrounded) this.airStart = performance.now();
+
+        if (this.grounded) {
+          const forwardFlat = new CANNON.Vec3(forward.x,0,forward.z); forwardFlat.normalize();
+          const rightFlat = new CANNON.Vec3(right.x,0,right.z); rightFlat.normalize();
+          const fSpeed = b.velocity.dot(forwardFlat);
+          const sSpeed = b.velocity.dot(rightFlat);
+          const topSpeed = input.boost && this.boost > 0 ? 44 : 31;
+          const engine = input.throttle === 0 ? 0 : (Math.sign(input.throttle) === Math.sign(fSpeed) ? 11800 : 17600) * input.throttle;
+          if (Math.abs(fSpeed) < topSpeed || Math.sign(engine) !== Math.sign(fSpeed)) b.applyForce(forwardFlat.scale(engine), b.position);
+          const grip = input.handbrake ? .86 : .22;
+          b.velocity.x -= rightFlat.x * sSpeed * grip;
+          b.velocity.z -= rightFlat.z * sSpeed * grip;
+          if (!input.throttle) { b.velocity.x *= .985; b.velocity.z *= .985; }
+          const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed)/5, .15, 1) * (input.handbrake ? 1.5 : 1);
+          b.angularVelocity.y += input.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
+          const align = new CANNON.Vec3(up.z * 9500, 0, -up.x * 9500);
+          b.torque.vadd(align, b.torque);
+        } else {
+          const torque = 5200;
+          b.torque.vadd(right.scale(-input.pitch * torque), b.torque);
+          b.torque.vadd(up.scale(input.yaw * torque * .72), b.torque);
+          b.torque.vadd(forward.scale(input.roll * torque), b.torque);
+        }
+
+        if (input.boost && (this.boost > 0 || game.training)) {
+          b.applyForce(forward.scale(this.grounded ? 12500 : 9300), b.position);
+          if (!game.training) this.boost = Math.max(0, this.boost - 27 * dt);
+          this.visual.flame.visible = true;
+          this.visual.flame.scale.y = .75 + Math.random() * .5;
+          spawnBoostParticle(this);
+        } else this.visual.flame.visible = false;
+
+        if (input.jumpQueued) {
+          if (this.grounded) {
+            b.applyImpulse(new CANNON.Vec3(0, 7200, 0), b.position); this.jumps = 1; this.airStart = performance.now();
+          } else if (this.jumps === 1 && performance.now() - this.airStart < 1500) {
+            const dodge = forward.scale(input.throttle * 4600).vadd(right.scale(-input.steer * 4600));
+            if (Math.abs(input.throttle) + Math.abs(input.steer) < .2) dodge.y += 5800; else dodge.y += 1800;
+            b.applyImpulse(dodge, b.position);
+            b.angularVelocity.vadd(right.scale(-input.throttle * 6.8), b.angularVelocity);
+            b.angularVelocity.vadd(forward.scale(input.steer * 7.4), b.angularVelocity);
+            this.jumps = 2;
+          }
+          input.jumpQueued = false;
+        }
+        if (b.position.y < -8) this.reset();
+      }
+      sync(dt) {
+        this.visual.root.position.copy(this.body.position);
+        this.visual.root.quaternion.copy(this.body.quaternion);
+        const speed = this.body.velocity.length();
+        this.wheelSpin -= speed * dt * 1.35;
+        this.visual.wheels.forEach(w => { w.wheel.rotation.x = this.wheelSpin; if (w.front) w.pivot.rotation.y = input.steer * .38; });
+      }
+    }
+
+    const boostParticles = [];
+    const particleGeo = new THREE.IcosahedronGeometry(.12,0);
+    function spawnBoostParticle(car) {
+      if (Math.random() > .48) return;
+      let p = boostParticles.find(v => !v.mesh.visible);
+      if (!p) { const mesh = new THREE.Mesh(particleGeo, new THREE.MeshBasicMaterial({ color: Math.random()>.35?0x38c8ff:0xffc14d, transparent:true, blending:THREE.AdditiveBlending })); scene.add(mesh); p={mesh,life:0,velocity:new THREE.Vector3()}; boostParticles.push(p); }
+      const back = new THREE.Vector3(0,0,2.65).applyQuaternion(car.visual.root.quaternion).add(car.visual.root.position);
+      p.mesh.position.copy(back); p.mesh.visible=true; p.life=.32; p.mesh.scale.setScalar(1);
+      p.velocity.set(0,.4,3.5).applyQuaternion(car.visual.root.quaternion).addScaledVector(new THREE.Vector3().copy(car.body.velocity), .08);
+    }
+    function updateParticles(dt) { for (const p of boostParticles) if (p.mesh.visible) { p.life-=dt; if (p.life<=0) p.mesh.visible=false; else { p.mesh.position.addScaledVector(p.velocity,dt); p.mesh.scale.setScalar(p.life*2.4); p.mesh.material.opacity=p.life*2.6; } } }
+
+    const car = new ArcadeCar();
+    const game = { active: false, training: false, ballCam: false, elapsed: 0 };
+    const cameraLook = new THREE.Vector3();
+    const cameraPos = new THREE.Vector3();
+    function updateCamera(dt) {
+      if (!game.active) return;
+      const carPos = car.visual.root.position;
+      const carForward = new THREE.Vector3(0,0,-1).applyQuaternion(car.visual.root.quaternion);
+      const planar = new THREE.Vector3(carForward.x,0,carForward.z);
+      if (planar.lengthSq() < .01) planar.set(0,0,-1); else planar.normalize();
+      const desired = carPos.clone().addScaledVector(planar,-10.5).add(new THREE.Vector3(0,4.8,0));
+      cameraPos.lerp(desired, 1-Math.exp(-dt*7));
+      camera.position.copy(cameraPos);
+      const target = game.ballCam && window.olympicoBall ? window.olympicoBall.position : carPos.clone().addScaledVector(planar,8).add(new THREE.Vector3(0,1.2,0));
+      cameraLook.lerp(target,1-Math.exp(-dt*8));
+      camera.up.set(0,1,0);
+      camera.lookAt(cameraLook);
+    }
+
+    let phase = 0, last = performance.now(), accumulator = 0;
     function animate(t) {
       requestAnimationFrame(animate);
+      const dt = Math.min((t-last)/1000,.05); last=t;
       phase = t * .00007;
-      if (!document.querySelector('#hud').classList.contains('visible')) {
+      input.poll();
+      if (input.cameraToggleQueued && game.active) { game.ballCam=!game.ballCam; input.cameraToggleQueued=false; document.querySelector('#cameraMode').textContent=`${game.ballCam?'Ball':'Car'} cam · Tap Space / C`; }
+      if (game.active) {
+        accumulator += dt;
+        while (accumulator >= 1/60) { car.fixedUpdate(1/60); physics.step(1/60); accumulator -= 1/60; }
+        car.sync(dt); updateParticles(dt); updateCamera(dt);
+        const kph = Math.round(car.body.velocity.length()*3.6);
+        document.querySelector('#speed').textContent=String(kph).padStart(3,'0');
+        document.querySelector('#boostValue').textContent=Math.round(car.boost);
+        document.querySelector('#boostCluster').style.setProperty('--boost',car.boost);
+      } else {
         camera.position.x = Math.sin(phase) * 40;
         camera.position.z = Math.cos(phase) * 48;
         camera.lookAt(0, 2, 0);
@@ -207,7 +406,8 @@
       if (button.dataset.action === 'quick-match') {
         document.querySelector('#menu').classList.add('hidden');
         document.querySelector('#hud').classList.add('visible');
-        showToast('Arena systems loading…');
+        game.active = true; game.training = false; car.reset(); cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,10));
+        showToast('Kickoff! Tap Space for ball cam · Hold Space to powerslide');
       } else showToast('Coming online in the next build phase.');
     }));
   </script>
