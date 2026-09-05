@@ -678,7 +678,7 @@
         if(this.mode==='host'){
           if(data.t==='join'){this.players.set(conn.peer,{username:String(data.username||'Driver').slice(0,18),team:this.assignTeam(data.team,conn.peer),host:false});this.broadcastLobby();}
           else if(data.t==='team'&&this.players.has(conn.peer)){this.players.get(conn.peer).team=this.assignTeam(data.team,conn.peer);this.broadcastLobby();}
-          else if(data.t==='input'){const remote=remoteCars.get(conn.peer);if(remote)Object.assign(remote.controls,data.input,{jumpQueued:data.input.jumpQueued||remote.controls.jumpQueued});}
+          else if(data.t==='input')this.applyRemoteInput(conn.peer,data);
           else if(data.t==='ball-hit')this.queueRemoteBallHit(conn.peer,data);
         }else{
           if(data.t==='lobby'){this.players=new Map(data.players);this.format=data.format;this.bots=data.bots;const me=this.players.get(this.localId);if(me)this.profile.team=me.team;renderLobby();}
@@ -700,11 +700,37 @@
         const me=this.players.get(this.localId);startGame({format:this.format,team:me?.team||'blue',networked:true});
         this.pendingBallHits.clear();this.ballHitTimes.clear();
         clearRemoteCars();
-        for(const [id,p] of this.players)if(id!==this.localId&&p.team!=='spectate'){const remote=new ArcadeCar({team:p.team,bot:true});remoteCars.set(id,{car:remote,controls:neutralControls()});}
+        for(const [id,p] of this.players)if(id!==this.localId&&p.team!=='spectate'){const remote=new ArcadeCar({team:p.team,bot:true});remoteCars.set(id,{car:remote,controls:neutralControls(),targetState:null});}
         resetNetworkCars();configureNetworkBots();ballBody.type=CANNON.Body.DYNAMIC;
       },
       startClientMatch(data){this.players=new Map(data.players);this.format=data.format;this.bots=data.bots;const me=this.players.get(this.localId);startGame({format:data.format,team:me?.team||'spectate',networked:true});clearGhostCars();this.clientBallContactActive=false;this.clientBallVelocity.setZero();ballBody.type=CANNON.Body.KINEMATIC;ballBody.velocity.setZero();},
-      preFixed(dt){if(this.mode==='host')for(const remote of remoteCars.values())remote.car.fixedUpdate(dt,remote.controls);},
+      applyRemoteInput(peerId,data){
+        const remote=remoteCars.get(peerId),packet=data.input;
+        if(!remote||!packet||typeof packet!=='object')return;
+        const axis=value=>Number.isFinite(Number(value))?THREE.MathUtils.clamp(Number(value),-1,1):0;
+        remote.controls.throttle=axis(packet.throttle);remote.controls.steer=axis(packet.steer);
+        remote.controls.pitch=axis(packet.pitch);remote.controls.yaw=axis(packet.yaw);remote.controls.roll=axis(packet.roll);
+        remote.controls.boost=!!packet.boost;remote.controls.handbrake=!!packet.handbrake;
+        remote.controls.jumpQueued=!!packet.jumpQueued||remote.controls.jumpQueued;
+        const state=data.state;
+        if(!state||![state.p,state.q,state.v,state.w].every(values=>Array.isArray(values)&&values.every(Number.isFinite)))return;
+        if(state.p.length!==3||state.q.length!==4||state.v.length!==3||state.w.length!==3)return;
+        if(Math.abs(state.p[0])>45||state.p[1]<-4||state.p[1]>30||Math.abs(state.p[2])>67)return;
+        remote.targetState={p:state.p.slice(),q:state.q.slice(),v:state.v.slice(),w:state.w.slice(),received:performance.now()};
+      },
+      reconcileRemoteCar(remote){
+        const state=remote.targetState;
+        if(!state||performance.now()-state.received>300)return;
+        const body=remote.car.body,targetPosition=new CANNON.Vec3(...state.p),delta=targetPosition.vsub(body.position),distance=delta.length();
+        if(distance<12&&distance>.01){const fraction=Math.min(.48,1.35/distance);body.position.vadd(delta.scale(fraction),body.position);}
+        const targetVelocity=new CANNON.Vec3(...state.v);if(targetVelocity.length()>48)targetVelocity.scale(48/targetVelocity.length(),targetVelocity);
+        body.velocity.x+=(targetVelocity.x-body.velocity.x)*.58;body.velocity.y+=(targetVelocity.y-body.velocity.y)*.58;body.velocity.z+=(targetVelocity.z-body.velocity.z)*.58;
+        const targetQuaternion=new CANNON.Quaternion(...state.q);targetQuaternion.normalize();body.quaternion.slerp(targetQuaternion,.42,body.quaternion);
+        const targetAngular=new CANNON.Vec3(...state.w);if(targetAngular.length()>14)targetAngular.scale(14/targetAngular.length(),targetAngular);
+        body.angularVelocity.x+=(targetAngular.x-body.angularVelocity.x)*.4;body.angularVelocity.y+=(targetAngular.y-body.angularVelocity.y)*.4;body.angularVelocity.z+=(targetAngular.z-body.angularVelocity.z)*.4;
+        body.wakeUp();
+      },
+      preFixed(dt){if(this.mode==='host')for(const remote of remoteCars.values()){this.reconcileRemoteCar(remote);remote.car.fixedUpdate(dt,remote.controls);}},
       sendClientBallHit(){
         if(this.mode!=='client'||game.spectator)return;
         const toBall=ballBody.position.vsub(car.body.position),distance=toBall.length();
@@ -746,7 +772,7 @@
       tick(dt){
         if(!game.active)return;
         if(this.mode==='host'){this.snapshotAccum+=dt;if(this.snapshotAccum>=1/30){this.snapshotAccum=0;this.sendSnapshot();}}
-        else if(this.mode==='client'){this.inputAccum+=dt;if(this.inputAccum>=1/30){this.inputAccum=0;this.sendClientBallHit();const c=this.connections.get('host');if(c?.open)c.send({t:'input',input:{throttle:input.throttle,steer:input.steer,pitch:input.pitch,yaw:input.yaw,roll:input.roll,boost:input.boost,handbrake:input.handbrake,jumpQueued:!!input.networkJumpQueued}});input.networkJumpQueued=false;}}
+        else if(this.mode==='client'){this.inputAccum+=dt;if(this.inputAccum>=1/30){this.inputAccum=0;this.sendClientBallHit();const c=this.connections.get('host');if(c?.open)c.send({t:'input',input:{throttle:input.throttle,steer:input.steer,pitch:input.pitch,yaw:input.yaw,roll:input.roll,boost:input.boost,handbrake:input.handbrake,jumpQueued:!!input.networkJumpQueued},state:{p:[car.body.position.x,car.body.position.y,car.body.position.z],q:[car.body.quaternion.x,car.body.quaternion.y,car.body.quaternion.z,car.body.quaternion.w],v:[car.body.velocity.x,car.body.velocity.y,car.body.velocity.z],w:[car.body.angularVelocity.x,car.body.angularVelocity.y,car.body.angularVelocity.z]}});input.networkJumpQueued=false;}}
       },
       sendSnapshot(){
         const pack=(id,vehicle)=>({id,team:vehicle.team,p:[vehicle.body.position.x,vehicle.body.position.y,vehicle.body.position.z],q:[vehicle.body.quaternion.x,vehicle.body.quaternion.y,vehicle.body.quaternion.z,vehicle.body.quaternion.w],v:[vehicle.body.velocity.x,vehicle.body.velocity.y,vehicle.body.velocity.z],w:[vehicle.body.angularVelocity.x,vehicle.body.angularVelocity.y,vehicle.body.angularVelocity.z]});
@@ -756,7 +782,7 @@
       applySnapshot(s){
         game.time=s.time;game.blue=s.blue;game.orange=s.orange;game.overtime=s.overtime;document.querySelector('#blueScore').textContent=s.blue;document.querySelector('#orangeScore').textContent=s.orange;
         ballBody.position.set(...s.ball.p);ballBody.quaternion.set(...s.ball.q);this.clientBallVelocity.set(...s.ball.v);ballBody.velocity.setZero();
-        const seen=new Set();for(const state of s.cars){seen.add(state.id);if(state.id===this.localId){car.body.position.x+=(state.p[0]-car.body.position.x)*.14;car.body.position.y+=(state.p[1]-car.body.position.y)*.14;car.body.position.z+=(state.p[2]-car.body.position.z)*.14;car.body.velocity.set(...state.v);continue;}let ghost=ghostCars.get(state.id);if(!ghost){ghost=new ArcadeCar({team:state.team,bot:true,ghost:true});ghostCars.set(state.id,ghost);}ghost.body.position.set(...state.p);ghost.body.quaternion.set(...state.q);ghost.body.velocity.set(...state.v);ghost.sync(1/60,neutralControls());}
+        const seen=new Set();for(const state of s.cars){seen.add(state.id);if(state.id===this.localId){car.body.position.x+=(state.p[0]-car.body.position.x)*.12;car.body.position.y+=(state.p[1]-car.body.position.y)*.12;car.body.position.z+=(state.p[2]-car.body.position.z)*.12;car.body.velocity.x+=(state.v[0]-car.body.velocity.x)*.18;car.body.velocity.y+=(state.v[1]-car.body.velocity.y)*.18;car.body.velocity.z+=(state.v[2]-car.body.velocity.z)*.18;car.body.angularVelocity.x+=(state.w[0]-car.body.angularVelocity.x)*.15;car.body.angularVelocity.y+=(state.w[1]-car.body.angularVelocity.y)*.15;car.body.angularVelocity.z+=(state.w[2]-car.body.angularVelocity.z)*.15;const authoritativeRotation=new CANNON.Quaternion(...state.q);car.body.quaternion.slerp(authoritativeRotation,.12,car.body.quaternion);continue;}let ghost=ghostCars.get(state.id);if(!ghost){ghost=new ArcadeCar({team:state.team,bot:true,ghost:true});ghostCars.set(state.id,ghost);}ghost.body.position.set(...state.p);ghost.body.quaternion.set(...state.q);ghost.body.velocity.set(...state.v);ghost.sync(1/60,neutralControls());}
         for(const [id,ghost]of ghostCars)if(!seen.has(id)){scene.remove(ghost.visual.root);ghostCars.delete(id);}
       },
       leave(){this.cleanup();clearRemoteCars();clearGhostCars();if(game.active)exitToMenu();document.querySelector('#multiplayer').classList.add('hidden');document.querySelector('.connect-only').hidden=false;document.querySelector('.lobby-only').hidden=true;},
@@ -764,7 +790,7 @@
     };
     function clearRemoteCars(){for(const r of remoteCars.values()){physics.removeBody(r.car.body);scene.remove(r.car.visual.root);}remoteCars.clear();}
     function clearGhostCars(){for(const g of ghostCars.values())scene.remove(g.visual.root);ghostCars.clear();}
-    function resetNetworkCars(){const counts={blue:0,orange:0};for(const [id,p]of network.players){if(p.team==='spectate')continue;const i=counts[p.team]++,x=[0,-12,12,-22][i]||0,z=(p.team==='blue'?-1:1)*(28+Math.floor(i/2)*7),yaw=p.team==='blue'?Math.PI:0;if(id===network.localId)car.reset(x,z,yaw);else remoteCars.get(id)?.car.reset(x,z,yaw);}}
+    function resetNetworkCars(){const counts={blue:0,orange:0};for(const [id,p]of network.players){if(p.team==='spectate')continue;const i=counts[p.team]++,x=[0,-12,12,-22][i]||0,z=(p.team==='blue'?-1:1)*(28+Math.floor(i/2)*7),yaw=p.team==='blue'?Math.PI:0;if(id===network.localId)car.reset(x,z,yaw);else{const remote=remoteCars.get(id);remote?.car.reset(x,z,yaw);if(remote)remote.targetState=null;}}}
     function configureNetworkBots(){const counts={blue:0,orange:0};for(const p of network.players.values())if(p.team!=='spectate')counts[p.team]++;clearBots();if(!network.bots)return;for(const team of ['blue','orange'])for(let i=counts[team];i<network.format;i++){const botCar=new ArcadeCar({team,bot:true,index:i});botControllers.push(new BotController(botCar,i));}resetBots();}
     function syncRemoteCars(dt){for(const r of remoteCars.values())r.car.sync(dt,r.controls);}
     const cameraLook = new THREE.Vector3();
