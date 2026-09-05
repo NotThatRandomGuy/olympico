@@ -290,7 +290,7 @@
     const physics = new CANNON.World({ gravity: new CANNON.Vec3(0, -22, 0), allowSleep: true });
     physics.broadphase = new CANNON.SAPBroadphase(physics);
     physics.solver.iterations = 10;
-    physics.defaultContactMaterial.friction = .16;
+    physics.defaultContactMaterial.friction = 0;
     physics.defaultContactMaterial.restitution = .08;
     const floorBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
     floorBody.collisionFilterGroup=2;
@@ -410,10 +410,20 @@
         this.jumps = 0;
         this.wheelSpin = 0;
         this.jumpLatch = false;
+        this.groundLockUntil = 0;
       }
       reset(x=0,z=this.team==='blue'?-28:28,yaw=this.team==='blue'?Math.PI:0) {
         this.body.position.set(x,1.2,z); this.body.velocity.setZero(); this.body.angularVelocity.setZero(); this.body.force.setZero(); this.body.torque.setZero();
-        this.body.quaternion.setFromEuler(0,yaw,0); this.boost = game.training ? 100 : Math.max(this.boost, 33); this.jumps = 0;
+        this.body.quaternion.setFromEuler(0,yaw,0); this.boost = game.training ? 100 : Math.max(this.boost, 33); this.jumps = 0; this.groundLockUntil=0;
+      }
+      detectSurface(up) {
+        const p=this.body.position,candidates=[];
+        const add=(distance,x,y,z)=>{const normal=new CANNON.Vec3(x,y,z);if(distance>=0&&distance<1.05&&up.dot(normal)>.18)candidates.push({distance,normal});};
+        add(p.y,0,1,0); add(24-p.y,0,-1,0); add(p.x+38,1,0,0); add(38-p.x,-1,0,0);
+        const outsideGoal=Math.abs(p.x)>10.4||p.y>7.2;
+        if(outsideGoal){add(p.z+54,0,0,1);add(54-p.z,0,0,-1);}else{add(p.z+61,0,0,1);add(61-p.z,0,0,-1);}
+        if(candidates.length){candidates.sort((a,b)=>a.distance-b.distance);return candidates[0].normal;}
+        return null;
       }
       fixedUpdate(dt, controls=input) {
         const b = this.body;
@@ -424,8 +434,9 @@
         const rayEnd = b.position.vadd(up.scale(-1.32));
         physics.raycastClosest(b.position, rayEnd, { skipBackfaces: false, collisionFilterGroup:1, collisionFilterMask:2 }, ray);
         const wasGrounded = this.grounded;
-        this.grounded = ray.hasHit && arenaBodies.includes(ray.body);
-        this.groundNormal = this.grounded ? ray.hitNormalWorld.clone() : new CANNON.Vec3(0,1,0);
+        const detectedNormal=this.detectSurface(up);
+        this.grounded=(!!detectedNormal||(ray.hasHit&&ray.distance<.95&&arenaBodies.includes(ray.body)))&&performance.now()>=this.groundLockUntil;
+        this.groundNormal=detectedNormal||(this.grounded?ray.hitNormalWorld.clone():new CANNON.Vec3(0,1,0));
         if (this.grounded && !wasGrounded) this.jumps = 0;
         if (!this.grounded && wasGrounded) this.airStart = performance.now();
 
@@ -436,8 +447,12 @@
           const fSpeed = b.velocity.dot(forwardFlat);
           const sSpeed = b.velocity.dot(rightFlat);
           const topSpeed = controls.boost && this.boost > 0 ? 44 : 31;
-          const engine = controls.throttle === 0 ? 0 : (Math.sign(controls.throttle) === Math.sign(fSpeed) ? 11800 : 17600) * controls.throttle;
-          if (Math.abs(fSpeed) < topSpeed || Math.sign(engine) !== Math.sign(fSpeed)) b.applyForce(forwardFlat.scale(engine), b.position);
+          if(controls.throttle){
+            const acceleration=(Math.sign(controls.throttle)===Math.sign(fSpeed)?21:34)*controls.throttle*dt;
+            const nextSpeed=THREE.MathUtils.clamp(fSpeed+acceleration,-18,topSpeed);
+            b.velocity.vadd(forwardFlat.scale(nextSpeed-fSpeed),b.velocity);
+            b.wakeUp();
+          }
           const grip = controls.handbrake ? .86 : .22;
           b.velocity.x -= rightFlat.x * sSpeed * grip;
           b.velocity.z -= rightFlat.z * sSpeed * grip;
@@ -446,7 +461,7 @@
           b.angularVelocity.y += controls.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
           const alignAxis = up.cross(n);
           b.torque.vadd(alignAxis.scale(13500), b.torque);
-          if (n.y < .75) b.applyForce(n.scale(-9200),b.position);
+          if (n.y < .75) b.applyForce(n.scale(-9200));
         } else {
           const torque = 5200;
           b.torque.vadd(right.scale(-controls.pitch * torque), b.torque);
@@ -455,7 +470,9 @@
         }
 
         if (controls.boost && (this.boost > 0 || game.training)) {
-          b.applyForce(forward.scale(this.grounded ? 12500 : 9300), b.position);
+          const boostDelta=(this.grounded?15:11)*dt;
+          if(b.velocity.length()<47)b.velocity.vadd(forward.scale(boostDelta),b.velocity);
+          b.wakeUp();
           if (!game.training) this.boost = Math.max(0, this.boost - 27 * dt);
           this.visual.flame.visible = true;
           this.visual.flame.scale.y = .75 + Math.random() * .5;
@@ -464,11 +481,11 @@
 
         if (controls.jumpQueued) {
           if (this.grounded) {
-            b.applyImpulse(new CANNON.Vec3(0, 7200, 0), b.position); this.jumps = 1; this.airStart = performance.now();
+            b.velocity.vadd(this.groundNormal.scale(5.2),b.velocity); b.wakeUp(); this.jumps = 1; this.airStart = performance.now(); this.groundLockUntil=this.airStart+140;
           } else if (this.jumps === 1 && performance.now() - this.airStart < 1500) {
-            const dodge = forward.scale(controls.throttle * 4600).vadd(right.scale(-controls.steer * 4600));
-            if (Math.abs(controls.throttle) + Math.abs(controls.steer) < .2) dodge.y += 5800; else dodge.y += 1800;
-            b.applyImpulse(dodge, b.position);
+            const dodge = forward.scale(controls.throttle * 4.4).vadd(right.scale(-controls.steer * 4.4));
+            if (Math.abs(controls.throttle) + Math.abs(controls.steer) < .2) dodge.y += 3.2; else dodge.y += 1.15;
+            b.velocity.vadd(dodge,b.velocity);b.wakeUp();
             b.angularVelocity.vadd(right.scale(-controls.throttle * 6.8), b.angularVelocity);
             b.angularVelocity.vadd(forward.scale(controls.steer * 7.4), b.angularVelocity);
             this.jumps = 2;
@@ -533,7 +550,7 @@
       if (game.resetUntil || game.ended) return;
       game[team]++; document.querySelector(`#${team}Score`).textContent=game[team];
       const origin=new CANNON.Vec3(0,3,team==='blue'?62:-62);
-      for(const vehicle of allCars()) { const delta=vehicle.body.position.vsub(origin); const d=Math.max(delta.length(),3); if(d<38) vehicle.body.applyImpulse(delta.scale(28000/(d*d)),vehicle.body.position); }
+      for(const vehicle of allCars()) { const delta=vehicle.body.position.vsub(origin); const d=Math.max(delta.length(),3); if(d<38) vehicle.body.applyImpulse(delta.scale(28000/(d*d))); }
       resetBall(); if(network.mode==='host')resetNetworkCars(); else car.reset(0,game.team==='orange'?28:-28,game.team==='orange'?0:Math.PI); resetBots();
       announce(game.overtime?'GOLDEN GOAL!':'GOAL!',team==='blue'?'#51d5ff':'#ffc14d',1900);
       if(game.overtime){game.ended=true; setTimeout(()=>endMatch(team),2100);} else game.resetUntil=performance.now()+2100;
@@ -564,7 +581,8 @@
     }
     function syncBallAndHud() {
       ballMesh.position.copy(ballBody.position); ballMesh.quaternion.copy(ballBody.quaternion);
-      const clock=game.training?'∞':game.overtime?'OT':`${String(Math.floor(game.time/60)).padStart(2,'0')}:${String(Math.ceil(game.time%60)).padStart(2,'0')}`;
+      const totalSeconds=Math.max(0,Math.ceil(game.time));
+      const clock=game.training?'∞':game.overtime?'OT':`${String(Math.floor(totalSeconds/60)).padStart(2,'0')}:${String(totalSeconds%60).padStart(2,'0')}`;
       document.querySelector('#clock').textContent=clock;
       const projected=ballMesh.position.clone().project(camera); const visible=projected.z>-1&&projected.z<1&&Math.abs(projected.x)<.92&&Math.abs(projected.y)<.88;
       const indicator=document.querySelector('#ballIndicator'); indicator.style.display=visible?'none':'block';
