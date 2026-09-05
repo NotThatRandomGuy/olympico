@@ -446,7 +446,9 @@
           const rightFlat = right.vsub(n.scale(right.dot(n))); rightFlat.normalize();
           const fSpeed = b.velocity.dot(forwardFlat);
           const sSpeed = b.velocity.dot(rightFlat);
-          const topSpeed = controls.boost && this.boost > 0 ? 44 : 31;
+          const normalTopSpeed = 31;
+          const boostedTopSpeed = normalTopSpeed * 1.25;
+          const topSpeed = controls.boost && this.boost > 0 ? boostedTopSpeed : normalTopSpeed;
           if(controls.throttle){
             const acceleration=(Math.sign(controls.throttle)===Math.sign(fSpeed)?21:34)*controls.throttle*dt;
             const nextSpeed=THREE.MathUtils.clamp(fSpeed+acceleration,-18,topSpeed);
@@ -457,8 +459,13 @@
           b.velocity.x -= rightFlat.x * sSpeed * grip;
           b.velocity.z -= rightFlat.z * sSpeed * grip;
           if (!controls.throttle) { b.velocity.x *= .985; b.velocity.z *= .985; }
-          const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed)/5, .15, 1) * (controls.handbrake ? 1.5 : 1);
-          b.angularVelocity.y += controls.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
+          const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed) / 14, .2, 1);
+          const maxTurnRate = controls.handbrake ? 1.65 : 1.2;
+          const targetTurnRate = controls.steer * maxTurnRate * steerScale * (fSpeed >= -.5 ? 1 : -1);
+          const currentTurnRate = b.angularVelocity.dot(n);
+          const turnResponse = controls.steer ? 10 : 22;
+          const turnCorrection = (targetTurnRate - currentTurnRate) * (1 - Math.exp(-turnResponse * dt));
+          b.angularVelocity.vadd(n.scale(turnCorrection), b.angularVelocity);
           const alignAxis = up.cross(n);
           b.torque.vadd(alignAxis.scale(13500), b.torque);
           if (n.y < .75) b.applyForce(n.scale(-9200));
@@ -470,8 +477,16 @@
         }
 
         if (controls.boost && (this.boost > 0 || game.training)) {
-          const boostDelta=(this.grounded?15:11)*dt;
-          if(b.velocity.length()<47)b.velocity.vadd(forward.scale(boostDelta),b.velocity);
+          const boostTopSpeed = 31 * 1.25;
+          let boostDirection = forward;
+          if (this.grounded) {
+            boostDirection = forward.vsub(this.groundNormal.scale(forward.dot(this.groundNormal)));
+            boostDirection.normalize();
+          }
+          const boostForwardSpeed = b.velocity.dot(boostDirection);
+          const boostAcceleration = this.grounded ? 30 : 21;
+          const boostDelta = Math.min(boostAcceleration * dt, Math.max(0, boostTopSpeed - boostForwardSpeed));
+          b.velocity.vadd(boostDirection.scale(boostDelta),b.velocity);
           b.wakeUp();
           if (!game.training) this.boost = Math.max(0, this.boost - 27 * dt);
           this.visual.flame.visible = true;
@@ -481,10 +496,10 @@
 
         if (controls.jumpQueued) {
           if (this.grounded) {
-            b.velocity.vadd(this.groundNormal.scale(5.2),b.velocity); b.wakeUp(); this.jumps = 1; this.airStart = performance.now(); this.groundLockUntil=this.airStart+140;
+            b.velocity.vadd(this.groundNormal.scale(6.35),b.velocity); b.wakeUp(); this.jumps = 1; this.airStart = performance.now(); this.groundLockUntil=this.airStart+150;
           } else if (this.jumps === 1 && performance.now() - this.airStart < 1500) {
             const dodge = forward.scale(controls.throttle * 4.4).vadd(right.scale(-controls.steer * 4.4));
-            if (Math.abs(controls.throttle) + Math.abs(controls.steer) < .2) dodge.y += 3.2; else dodge.y += 1.15;
+            if (Math.abs(controls.throttle) + Math.abs(controls.steer) < .2) dodge.y += 3.6; else dodge.y += 1.35;
             b.velocity.vadd(dodge,b.velocity);b.wakeUp();
             b.angularVelocity.vadd(right.scale(-controls.throttle * 6.8), b.angularVelocity);
             b.angularVelocity.vadd(forward.scale(controls.steer * 7.4), b.angularVelocity);
