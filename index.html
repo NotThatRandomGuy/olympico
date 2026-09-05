@@ -343,17 +343,18 @@
     }
 
     class ArcadeCar {
-      constructor() {
+      constructor({team='blue',bot=false,index=0}={}) {
+        this.team=team; this.isBot=bot; this.index=index;
         this.body = new CANNON.Body({
           mass: 820,
           shape: new CANNON.Box(new CANNON.Vec3(1.32,.62,2.12)),
           linearDamping: .07,
           angularDamping: .34,
-          position: new CANNON.Vec3(0, 1.2, 28)
+          position: new CANNON.Vec3(0, 1.2, team==='blue'?-28:28)
         });
         this.body.quaternion.setFromEuler(0, 0, 0);
         physics.addBody(this.body);
-        this.visual = makeCarVisual();
+        this.visual = makeCarVisual(team==='blue'?0x16a8ff:0xff7a18,bot?'compact':cosmetics.body,bot?'round':cosmetics.wheel);
         scene.add(this.visual.root);
         this.boost = 100;
         this.grounded = false;
@@ -362,11 +363,11 @@
         this.wheelSpin = 0;
         this.jumpLatch = false;
       }
-      reset(x=0,z=-28,yaw=Math.PI) {
+      reset(x=0,z=this.team==='blue'?-28:28,yaw=this.team==='blue'?Math.PI:0) {
         this.body.position.set(x,1.2,z); this.body.velocity.setZero(); this.body.angularVelocity.setZero(); this.body.force.setZero(); this.body.torque.setZero();
         this.body.quaternion.setFromEuler(0,yaw,0); this.boost = game.training ? 100 : Math.max(this.boost, 33); this.jumps = 0;
       }
-      fixedUpdate(dt) {
+      fixedUpdate(dt, controls=input) {
         const b = this.body;
         const forward = b.quaternion.vmult(new CANNON.Vec3(0,0,-1));
         const right = b.quaternion.vmult(new CANNON.Vec3(1,0,0));
@@ -386,26 +387,26 @@
           const rightFlat = right.vsub(n.scale(right.dot(n))); rightFlat.normalize();
           const fSpeed = b.velocity.dot(forwardFlat);
           const sSpeed = b.velocity.dot(rightFlat);
-          const topSpeed = input.boost && this.boost > 0 ? 44 : 31;
-          const engine = input.throttle === 0 ? 0 : (Math.sign(input.throttle) === Math.sign(fSpeed) ? 11800 : 17600) * input.throttle;
+          const topSpeed = controls.boost && this.boost > 0 ? 44 : 31;
+          const engine = controls.throttle === 0 ? 0 : (Math.sign(controls.throttle) === Math.sign(fSpeed) ? 11800 : 17600) * controls.throttle;
           if (Math.abs(fSpeed) < topSpeed || Math.sign(engine) !== Math.sign(fSpeed)) b.applyForce(forwardFlat.scale(engine), b.position);
-          const grip = input.handbrake ? .86 : .22;
+          const grip = controls.handbrake ? .86 : .22;
           b.velocity.x -= rightFlat.x * sSpeed * grip;
           b.velocity.z -= rightFlat.z * sSpeed * grip;
-          if (!input.throttle) { b.velocity.x *= .985; b.velocity.z *= .985; }
-          const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed)/5, .15, 1) * (input.handbrake ? 1.5 : 1);
-          b.angularVelocity.y += input.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
+          if (!controls.throttle) { b.velocity.x *= .985; b.velocity.z *= .985; }
+          const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed)/5, .15, 1) * (controls.handbrake ? 1.5 : 1);
+          b.angularVelocity.y += controls.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
           const alignAxis = up.cross(n);
           b.torque.vadd(alignAxis.scale(13500), b.torque);
           if (n.y < .75) b.applyForce(n.scale(-9200),b.position);
         } else {
           const torque = 5200;
-          b.torque.vadd(right.scale(-input.pitch * torque), b.torque);
-          b.torque.vadd(up.scale(input.yaw * torque * .72), b.torque);
-          b.torque.vadd(forward.scale(input.roll * torque), b.torque);
+          b.torque.vadd(right.scale(-controls.pitch * torque), b.torque);
+          b.torque.vadd(up.scale(controls.yaw * torque * .72), b.torque);
+          b.torque.vadd(forward.scale(controls.roll * torque), b.torque);
         }
 
-        if (input.boost && (this.boost > 0 || game.training)) {
+        if (controls.boost && (this.boost > 0 || game.training)) {
           b.applyForce(forward.scale(this.grounded ? 12500 : 9300), b.position);
           if (!game.training) this.boost = Math.max(0, this.boost - 27 * dt);
           this.visual.flame.visible = true;
@@ -413,27 +414,27 @@
           spawnBoostParticle(this);
         } else this.visual.flame.visible = false;
 
-        if (input.jumpQueued) {
+        if (controls.jumpQueued) {
           if (this.grounded) {
             b.applyImpulse(new CANNON.Vec3(0, 7200, 0), b.position); this.jumps = 1; this.airStart = performance.now();
           } else if (this.jumps === 1 && performance.now() - this.airStart < 1500) {
-            const dodge = forward.scale(input.throttle * 4600).vadd(right.scale(-input.steer * 4600));
-            if (Math.abs(input.throttle) + Math.abs(input.steer) < .2) dodge.y += 5800; else dodge.y += 1800;
+            const dodge = forward.scale(controls.throttle * 4600).vadd(right.scale(-controls.steer * 4600));
+            if (Math.abs(controls.throttle) + Math.abs(controls.steer) < .2) dodge.y += 5800; else dodge.y += 1800;
             b.applyImpulse(dodge, b.position);
-            b.angularVelocity.vadd(right.scale(-input.throttle * 6.8), b.angularVelocity);
-            b.angularVelocity.vadd(forward.scale(input.steer * 7.4), b.angularVelocity);
+            b.angularVelocity.vadd(right.scale(-controls.throttle * 6.8), b.angularVelocity);
+            b.angularVelocity.vadd(forward.scale(controls.steer * 7.4), b.angularVelocity);
             this.jumps = 2;
           }
-          input.jumpQueued = false;
+          controls.jumpQueued = false;
         }
         if (b.position.y < -8) this.reset();
       }
-      sync(dt) {
+      sync(dt, controls=input) {
         this.visual.root.position.copy(this.body.position);
         this.visual.root.quaternion.copy(this.body.quaternion);
         const speed = this.body.velocity.length();
         this.wheelSpin -= speed * dt * 1.35;
-        this.visual.wheels.forEach(w => { w.wheel.rotation.x = this.wheelSpin; if (w.front) w.pivot.rotation.y = input.steer * .38; });
+        this.visual.wheels.forEach(w => { w.wheel.rotation.x = this.wheelSpin; if (w.front) w.pivot.rotation.y = controls.steer * .38; });
       }
     }
 
@@ -483,13 +484,13 @@
       if (game.resetUntil || game.ended) return;
       game[team]++; document.querySelector(`#${team}Score`).textContent=game[team];
       const origin=new CANNON.Vec3(0,3,team==='blue'?62:-62);
-      for(const vehicle of [car]) { const delta=vehicle.body.position.vsub(origin); const d=Math.max(delta.length(),3); if(d<38) vehicle.body.applyImpulse(delta.scale(28000/(d*d)),vehicle.body.position); }
-      resetBall(); car.reset();
+      for(const vehicle of allCars()) { const delta=vehicle.body.position.vsub(origin); const d=Math.max(delta.length(),3); if(d<38) vehicle.body.applyImpulse(delta.scale(28000/(d*d)),vehicle.body.position); }
+      resetBall(); car.reset(0,game.team==='orange'?28:-28,game.team==='orange'?0:Math.PI); resetBots();
       announce(game.overtime?'GOLDEN GOAL!':'GOAL!',team==='blue'?'#51d5ff':'#ffc14d',1900);
       if(game.overtime){game.ended=true; setTimeout(()=>endMatch(team),2100);} else game.resetUntil=performance.now()+2100;
     }
     function endMatch(winner) {
-      game.active=false; document.querySelector('#hud').classList.remove('visible'); document.querySelector('#menu').classList.remove('hidden');
+      game.active=false; clearBots(); document.querySelector('#hud').classList.remove('visible'); document.querySelector('#menu').classList.remove('hidden');
       showToast(`${winner==='blue'?'Blue':'Orange'} wins ${game.blue}–${game.orange}`);
     }
     function updateMatch(dt) {
@@ -518,6 +519,49 @@
       const indicator=document.querySelector('#ballIndicator'); indicator.style.display=visible?'none':'block';
       if(!visible){const dx=projected.x,dy=-projected.y;const angle=Math.atan2(dy,dx)+Math.PI/2;const margin=45;const radius=Math.min(innerWidth,innerHeight)*.42;const x=innerWidth/2+Math.cos(angle-Math.PI/2)*radius;const y=innerHeight/2+Math.sin(angle-Math.PI/2)*radius;indicator.style.left=`${THREE.MathUtils.clamp(x,margin,innerWidth-margin)}px`;indicator.style.top=`${THREE.MathUtils.clamp(y,margin,innerHeight-margin)}px`;indicator.style.transform=`translate(-50%,-50%) rotate(${angle}rad)`;}
     }
+
+    const botControllers=[];
+    class BotController {
+      constructor(car,index){this.car=car;this.index=index;this.state='pursue';this.jumpCooldown=0;this.controls={throttle:0,steer:0,pitch:0,yaw:0,roll:0,boost:false,handbrake:false,jumpQueued:false};}
+      think(dt){
+        const c=this.car.body,b=ballBody,team=this.car.team,attackZ=team==='blue'?58:-58,ownZ=-attackZ;
+        const dist=Math.hypot(b.position.x-c.position.x,b.position.z-c.position.z);
+        const danger=team==='blue'?b.position.z<-26:b.position.z>26;
+        this.state=danger&&this.index>0?'defend':dist<5?'challenge':'pursue';
+        let tx=b.position.x,tz=b.position.z;
+        if(this.state==='defend'){tx=THREE.MathUtils.clamp(b.position.x*.42,-9,9);tz=ownZ+(team==='blue'?7:-7);}
+        else {const gx=-b.position.x,gz=attackZ-b.position.z,len=Math.hypot(gx,gz)||1;tx=b.position.x-gx/len*5.5;tz=b.position.z-gz/len*5.5;if(dist<8){tx=b.position.x;tz=b.position.z;}}
+        const toX=tx-c.position.x,toZ=tz-c.position.z,toLen=Math.hypot(toX,toZ)||1;
+        const forward=c.quaternion.vmult(new CANNON.Vec3(0,0,-1));
+        const dot=THREE.MathUtils.clamp((forward.x*toX+forward.z*toZ)/toLen,-1,1);
+        const cross=(forward.z*toX-forward.x*toZ)/toLen;
+        const angle=Math.acos(dot);
+        this.controls.steer=THREE.MathUtils.clamp(cross*2.2,-1,1);
+        this.controls.throttle=angle>2.25?-.6:1;
+        this.controls.handbrake=angle>1.05&&c.velocity.length()>11;
+        this.controls.boost=angle<.28&&dist>16&&this.car.boost>8;
+        this.controls.pitch=this.controls.throttle;this.controls.yaw=this.controls.steer;this.controls.roll=0;
+        this.jumpCooldown-=dt;
+        if(dist<4.5&&b.position.y>2.4&&this.jumpCooldown<=0){this.controls.jumpQueued=true;this.jumpCooldown=1.4;}
+      }
+    }
+    function clearBots(){while(botControllers.length){const bot=botControllers.pop();physics.removeBody(bot.car.body);scene.remove(bot.car.visual.root);}}
+    function configureBots(format){
+      clearBots(); if(game.training)return;
+      for(const team of ['blue','orange']){
+        const count=Math.max(0,format-(team===game.team?1:0));
+        for(let i=0;i<count;i++){const botCar=new ArcadeCar({team,bot:true,index:i});botControllers.push(new BotController(botCar,i));}
+      }
+      resetBots();
+    }
+    function resetBots(){
+      const lanes=[-12,12,-23,23];
+      const byTeam={blue:0,orange:0};
+      for(const bot of botControllers){const team=bot.car.team,i=byTeam[team]++;const z=(team==='blue'?-1:1)*(i===0?34:38+Math.floor(i/2)*5);bot.car.reset(lanes[i%lanes.length]||0,z,team==='blue'?Math.PI:0);}
+    }
+    function updateBots(dt){for(const bot of botControllers){bot.think(dt);bot.car.fixedUpdate(dt,bot.controls);}}
+    function syncBots(dt){for(const bot of botControllers)bot.car.sync(dt,bot.controls);}
+    function allCars(){return [car,...botControllers.map(b=>b.car)];}
     const cameraLook = new THREE.Vector3();
     const cameraPos = new THREE.Vector3();
     function updateCamera(dt) {
@@ -543,8 +587,8 @@
       input.poll();
       if (input.cameraToggleQueued && game.active) { game.ballCam=!game.ballCam; input.cameraToggleQueued=false; document.querySelector('#cameraMode').textContent=`${game.ballCam?'Ball':'Car'} cam · Tap Space / C`; }
       if (game.active) {
-        if(!game.paused){accumulator += dt; while (accumulator >= 1/60) { car.fixedUpdate(1/60); updateMatch(1/60); physics.step(1/60); accumulator -= 1/60; }}
-        car.sync(dt); syncBallAndHud(); updateParticles(dt); updateCamera(dt);
+        if(!game.paused){accumulator += dt; while (accumulator >= 1/60) { car.fixedUpdate(1/60); updateBots(1/60); updateMatch(1/60); physics.step(1/60); accumulator -= 1/60; }}
+        car.sync(dt); syncBots(dt); syncBallAndHud(); updateParticles(dt); updateCamera(dt);
         const kph = Math.round(car.body.velocity.length()*3.6);
         document.querySelector('#speed').textContent=String(kph).padStart(3,'0');
         document.querySelector('#boostValue').textContent=Math.round(car.boost);
@@ -574,7 +618,7 @@
       document.querySelector('#hud').classList.add('visible');
       Object.assign(game,{active:true,paused:false,training,time:300,blue:0,orange:0,overtime:false,resetUntil:0,ended:false,format,team});
       document.querySelector('#blueScore').textContent='0'; document.querySelector('#orangeScore').textContent='0';
-      resetBall(); car.boost=100; car.reset(0,team==='orange'?28:-28,team==='orange'?0:Math.PI); applyCosmetics(team);
+      resetBall(); car.boost=100; car.team=team; car.reset(0,team==='orange'?28:-28,team==='orange'?0:Math.PI); applyCosmetics(team); configureBots(format);
       cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,team==='orange'?10:-10));
       announce(training?'TRAINING':'KICKOFF',training?'#baff41':'#ffffff',900);
       showToast(training?'Infinite boost · R resets the ball':'Tap Space for ball cam · Hold Space to powerslide');
@@ -584,7 +628,7 @@
       document.querySelector('#pauseMenu').classList.toggle('hidden',!game.paused);
       if(game.paused) input.keys.clear();
     }
-    function exitToMenu(){game.active=false;game.paused=false;document.querySelector('#pauseMenu').classList.add('hidden');document.querySelector('#hud').classList.remove('visible');document.querySelector('#menu').classList.remove('hidden');}
+    function exitToMenu(){game.active=false;game.paused=false;clearBots();document.querySelector('#pauseMenu').classList.add('hidden');document.querySelector('#hud').classList.remove('visible');document.querySelector('#menu').classList.remove('hidden');}
     document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>button.closest('.screen').classList.add('hidden')));
     function wireChoices(containerId,key) {
       const box=document.querySelector(containerId);
