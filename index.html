@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#07101d">
+  <meta name="description" content="Olympico — fast-paced arcade vehicle soccer in the browser.">
+  <title>Olympico</title>
+  <style>
+    :root {
+      --ink: #f7fbff;
+      --muted: #93a8bd;
+      --panel: rgba(7, 16, 29, .86);
+      --panel-strong: rgba(9, 21, 38, .96);
+      --line: rgba(176, 214, 255, .16);
+      --blue: #16a8ff;
+      --blue-hot: #51d5ff;
+      --orange: #ff7a18;
+      --orange-hot: #ffc14d;
+      --lime: #baff41;
+      --danger: #ff496a;
+      --display: "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+      --body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #050b14; color: var(--ink); font-family: var(--body); }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle at 50% 44%, transparent 36%, rgba(2, 6, 12, .28) 100%); z-index: 1; }
+    .screen { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: clamp(18px, 4vw, 56px); transition: opacity .25s ease, visibility .25s; }
+    .screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    #menu { background: linear-gradient(90deg, rgba(3, 9, 18, .96) 0%, rgba(3, 9, 18, .82) 42%, rgba(3, 9, 18, .18) 72%, transparent 100%); place-items: center start; }
+    .menu-card { width: min(560px, 100%); padding: clamp(24px, 5vw, 58px); border: 1px solid var(--line); background: linear-gradient(145deg, rgba(11, 25, 43, .93), rgba(6, 14, 25, .8)); box-shadow: 0 28px 80px rgba(0, 0, 0, .44), inset 0 1px rgba(255,255,255,.04); backdrop-filter: blur(18px); clip-path: polygon(0 0, 94% 0, 100% 7%, 100% 100%, 6% 100%, 0 93%); }
+    .eyebrow { color: var(--blue-hot); font-size: .78rem; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; }
+    .brand { margin: 8px 0 0; font-family: var(--display); font-size: clamp(4.1rem, 11vw, 7rem); font-style: italic; font-weight: 900; letter-spacing: -.06em; line-height: .88; text-transform: uppercase; text-shadow: 0 0 32px rgba(22, 168, 255, .24); }
+    .brand span { color: transparent; -webkit-text-stroke: 1px rgba(255,255,255,.7); }
+    .tagline { margin: 14px 0 30px; color: var(--muted); font-size: 1rem; letter-spacing: .03em; }
+    .menu-actions { display: grid; gap: 11px; }
+    .action { position: relative; min-height: 56px; padding: 0 20px; border: 1px solid var(--line); background: rgba(255,255,255,.035); display: flex; align-items: center; justify-content: space-between; cursor: pointer; text-align: left; text-transform: uppercase; letter-spacing: .1em; font-size: .9rem; font-weight: 850; transition: transform .16s, border-color .16s, background .16s; overflow: hidden; }
+    .action::before { content: ""; position: absolute; inset: 0; width: 4px; background: var(--blue); transition: width .18s ease; z-index: -1; }
+    .action:hover, .action:focus-visible { transform: translateX(6px); border-color: rgba(81, 213, 255, .65); outline: none; }
+    .action:hover::before, .action:focus-visible::before { width: 100%; background: linear-gradient(90deg, rgba(22,168,255,.38), rgba(22,168,255,.06)); }
+    .action.primary { background: linear-gradient(90deg, rgba(22,168,255,.28), rgba(22,168,255,.06)); border-color: rgba(81, 213, 255, .5); }
+    .action small { color: var(--muted); font-size: .68rem; letter-spacing: .08em; }
+    .footer-note { margin-top: 22px; display: flex; gap: 18px; color: #6e849a; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
+    .key { display: inline-grid; place-items: center; min-width: 25px; height: 22px; padding: 0 6px; margin-right: 5px; color: #dceeff; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.13); border-bottom-width: 2px; border-radius: 4px; font-size: .68rem; font-weight: 800; }
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; opacity: 0; transition: opacity .25s; }
+    #hud.visible { opacity: 1; }
+    .scoreboard { position: absolute; left: 50%; top: max(15px, env(safe-area-inset-top)); transform: translateX(-50%); display: grid; grid-template-columns: 82px 110px 82px; height: 54px; filter: drop-shadow(0 8px 18px rgba(0,0,0,.35)); }
+    .score { display: grid; place-items: center; font-family: var(--display); font-size: 2rem; font-weight: 900; transform: skewX(-9deg); }
+    .score span { transform: skewX(9deg); }
+    .score.blue { background: linear-gradient(135deg, #0867d2, var(--blue)); }
+    .score.orange { background: linear-gradient(135deg, var(--orange), #da3e0b); }
+    .clock { display: grid; place-items: center; margin: 0 -5px; background: rgba(5,13,24,.92); border-block: 1px solid rgba(255,255,255,.15); font-family: var(--display); font-size: 1.45rem; font-weight: 850; letter-spacing: .06em; z-index: 1; }
+    .boost-cluster { position: absolute; right: clamp(18px, 3.8vw, 58px); bottom: max(24px, env(safe-area-inset-bottom)); width: 142px; height: 142px; }
+    .boost-ring { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(var(--orange-hot) calc(var(--boost, 100) * 1%), rgba(255,255,255,.08) 0); filter: drop-shadow(0 0 12px rgba(255, 159, 41, .26)); }
+    .boost-ring::after { content: ""; position: absolute; inset: 9px; border-radius: 50%; background: rgba(5,13,24,.88); border: 1px solid rgba(255,255,255,.12); }
+    .boost-value { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; font-family: var(--display); font-size: 2.8rem; font-weight: 900; }
+    .boost-label { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 2; color: var(--orange-hot); font-size: .62rem; font-weight: 900; letter-spacing: .22em; }
+    .speed { position: absolute; right: 126px; bottom: 25px; min-width: 110px; text-align: right; color: rgba(255,255,255,.9); font-family: var(--display); font-size: 2rem; font-weight: 850; }
+    .speed small { display: block; color: var(--muted); font-family: var(--body); font-size: .58rem; letter-spacing: .18em; }
+    .mode-pill { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 9px 15px; color: #b8ccdf; background: rgba(5,13,24,.72); border: 1px solid rgba(255,255,255,.11); border-radius: 100px; font-size: .7rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    #announcement { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: clamp(4rem, 12vw, 10rem); font-weight: 1000; font-style: italic; letter-spacing: -.04em; text-transform: uppercase; text-shadow: 0 4px 0 rgba(0,0,0,.24), 0 0 42px currentColor; opacity: 0; transform: scale(.82); transition: opacity .2s, transform .3s cubic-bezier(.2,.8,.2,1); }
+    #announcement.show { opacity: 1; transform: scale(1); }
+    #ballIndicator { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; display: none; transform-origin: center; filter: drop-shadow(0 0 6px rgba(255,255,255,.35)); }
+    #ballIndicator::before { content: ""; position: absolute; left: 15px; top: 5px; width: 20px; height: 31px; background: linear-gradient(var(--orange-hot), #fff1a8); clip-path: polygon(50% 0, 100% 70%, 65% 62%, 65% 100%, 35% 100%, 35% 62%, 0 70%); }
+    #toast { position: fixed; left: 50%; bottom: 90px; z-index: 50; transform: translate(-50%, 20px); max-width: min(440px, calc(100% - 32px)); padding: 12px 16px; color: #dfefff; background: rgba(5,13,24,.94); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 36px rgba(0,0,0,.4); font-size: .82rem; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
+    #toast.show { opacity: 1; transform: translate(-50%, 0); }
+    @media (max-width: 720px) {
+      #menu { background: rgba(3, 9, 18, .72); place-items: end center; }
+      .menu-card { padding: 26px 24px 30px; }
+      .brand { font-size: 4.25rem; }
+      .tagline { margin-bottom: 22px; }
+      .scoreboard { grid-template-columns: 65px 92px 65px; height: 46px; }
+      .score { font-size: 1.65rem; }
+      .clock { font-size: 1.18rem; }
+      .boost-cluster { width: 104px; height: 104px; right: 14px; bottom: 18px; }
+      .boost-value { font-size: 2.1rem; }
+      .boost-label { bottom: 14px; }
+      .speed { right: 90px; bottom: 15px; font-size: 1.5rem; }
+      .mode-pill { bottom: 18px; font-size: .58rem; }
+    }
+  </style>
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js","cannon-es":"https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"}}
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
+</head>
+<body>
+  <canvas id="game" aria-label="Olympico game arena"></canvas>
+  <div id="vignette"></div>
+
+  <main id="menu" class="screen">
+    <section class="menu-card" aria-labelledby="gameTitle">
+      <div class="eyebrow">Arcade vehicle football</div>
+      <h1 class="brand" id="gameTitle">Olymp<span>ico</span></h1>
+      <p class="tagline">Hit the impossible angle.</p>
+      <nav class="menu-actions" aria-label="Game modes">
+        <button class="action primary" data-action="quick-match"><span>Quick Match</span><small>1v1</small></button>
+        <button class="action" data-action="single-player"><span>Single Player</span><small>1v1 — 4v4</small></button>
+        <button class="action" data-action="multiplayer"><span>Direct Connect</span><small>P2P lobby</small></button>
+        <button class="action" data-action="training"><span>Training Grounds</span><small>Infinite boost</small></button>
+        <button class="action" data-action="garage"><span>Garage</span><small>Customize</small></button>
+      </nav>
+      <div class="footer-note"><span><b class="key">WASD</b> Drive</span><span><b class="key">J</b> Jump</span><span><b class="key">Shift</b> Boost</span></div>
+    </section>
+  </main>
+
+  <section id="hud" aria-label="Match HUD">
+    <div class="scoreboard"><div class="score blue"><span id="blueScore">0</span></div><div class="clock" id="clock">05:00</div><div class="score orange"><span id="orangeScore">0</span></div></div>
+    <div id="announcement" aria-live="assertive"></div>
+    <div id="ballIndicator" aria-label="Ball direction"></div>
+    <div class="mode-pill" id="cameraMode">Car cam · C to toggle</div>
+    <div class="speed"><span id="speed">000</span><small>KM/H</small></div>
+    <div class="boost-cluster" id="boostCluster"><div class="boost-ring"></div><div class="boost-value" id="boostValue">100</div><div class="boost-label">BOOST</div></div>
+  </section>
+  <div id="toast" role="status"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const canvas = document.querySelector('#game');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x07101d);
+    scene.fog = new THREE.FogExp2(0x07101d, .012);
+
+    const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, .1, 800);
+    camera.position.set(0, 24, 44);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight, false);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+
+    scene.add(new THREE.HemisphereLight(0x9cd8ff, 0x07111d, 2.2));
+    const sun = new THREE.DirectionalLight(0xffffff, 3.2);
+    sun.position.set(-18, 32, 22);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    scene.add(sun);
+
+    const field = new THREE.Mesh(new THREE.PlaneGeometry(76, 110), new THREE.MeshStandardMaterial({ color: 0x102f2c, roughness: .84, metalness: .05 }));
+    field.rotation.x = -Math.PI / 2;
+    field.receiveShadow = true;
+    scene.add(field);
+
+    const stripeMat = new THREE.MeshBasicMaterial({ color: 0x1f4c43, transparent: true, opacity: .5 });
+    for (let z = -50; z <= 50; z += 10) {
+      const stripe = new THREE.Mesh(new THREE.PlaneGeometry(76, 5), stripeMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(0, .012, z);
+      scene.add(stripe);
+    }
+
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xe8fbff, transparent: true, opacity: .5 });
+    const boundary = new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-36,.04,-53), new THREE.Vector3(36,.04,-53), new THREE.Vector3(36,.04,53), new THREE.Vector3(-36,.04,53), new THREE.Vector3(-36,.04,-53)
+    ]), lineMat);
+    scene.add(boundary);
+    const mid = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-36,.04,0), new THREE.Vector3(36,.04,0)]), lineMat);
+    scene.add(mid);
+
+    function goal(color, z) {
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: .35, metalness: .5, roughness: .28 });
+      const postGeo = new THREE.BoxGeometry(.5, 6, .5);
+      for (const x of [-10, 10]) { const post = new THREE.Mesh(postGeo, mat); post.position.set(x, 3, z); group.add(post); }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(20.5, .5, .5), mat); bar.position.set(0, 6, z); group.add(bar);
+      scene.add(group);
+    }
+    goal(0x16a8ff, -54.5); goal(0xff7a18, 54.5);
+
+    const stars = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0x9ed9ff, size: .16, transparent: true, opacity: .7 }));
+    const positions = new Float32Array(900);
+    for (let i = 0; i < positions.length; i += 3) { positions[i] = (Math.random()-.5)*180; positions[i+1] = 20+Math.random()*80; positions[i+2]=(Math.random()-.5)*180; }
+    stars.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3)); scene.add(stars);
+
+    let phase = 0;
+    function animate(t) {
+      requestAnimationFrame(animate);
+      phase = t * .00007;
+      if (!document.querySelector('#hud').classList.contains('visible')) {
+        camera.position.x = Math.sin(phase) * 40;
+        camera.position.z = Math.cos(phase) * 48;
+        camera.lookAt(0, 2, 0);
+      }
+      renderer.render(scene, camera);
+    }
+    requestAnimationFrame(animate);
+
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight, false);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    });
+
+    const toast = document.querySelector('#toast');
+    let toastTimer;
+    function showToast(message) { toast.textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 2200); }
+    document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
+      if (button.dataset.action === 'quick-match') {
+        document.querySelector('#menu').classList.add('hidden');
+        document.querySelector('#hud').classList.add('visible');
+        showToast('Arena systems loading…');
+      } else showToast('Coming online in the next build phase.');
+    }));
+  </script>
+</body>
+</html>
