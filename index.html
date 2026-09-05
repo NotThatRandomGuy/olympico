@@ -172,6 +172,8 @@
       const postGeo = new THREE.BoxGeometry(.5, 6, .5);
       for (const x of [-10, 10]) { const post = new THREE.Mesh(postGeo, mat); post.position.set(x, 3, z); group.add(post); }
       const bar = new THREE.Mesh(new THREE.BoxGeometry(20.5, .5, .5), mat); bar.position.set(0, 6, z); group.add(bar);
+      const net = new THREE.Mesh(new THREE.BoxGeometry(20,6,7), new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: .16 }));
+      net.position.set(0,3,z + Math.sign(z)*3.5); group.add(net);
       scene.add(group);
     }
     goal(0x16a8ff, -54.5); goal(0xff7a18, 54.5);
@@ -189,6 +191,32 @@
     const floorBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane() });
     floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     physics.addBody(floorBody);
+
+    const arenaBodies = [floorBody];
+    function addBarrier(half, position, color=0x24465e, opacity=.24) {
+      const body = new CANNON.Body({ type:CANNON.Body.STATIC, shape:new CANNON.Box(new CANNON.Vec3(...half)), position:new CANNON.Vec3(...position) });
+      physics.addBody(body); arenaBodies.push(body);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(half[0]*2,half[1]*2,half[2]*2), new THREE.MeshStandardMaterial({ color, transparent:true, opacity, roughness:.42, metalness:.42, side:THREE.DoubleSide }));
+      mesh.position.set(...position); mesh.receiveShadow=true; scene.add(mesh); return body;
+    }
+    addBarrier([1,12,55],[-39,12,0]); addBarrier([1,12,55],[39,12,0]);
+    addBarrier([13.5,12,1],[-24.5,12,-55]); addBarrier([13.5,12,1],[24.5,12,-55]);
+    addBarrier([13.5,12,1],[-24.5,12,55]); addBarrier([13.5,12,1],[24.5,12,55]);
+    addBarrier([10,8.5,1],[0,15.5,-55]); addBarrier([10,8.5,1],[0,15.5,55]);
+    addBarrier([10,3.5,1],[0,3.5,-62]); addBarrier([10,3.5,1],[0,3.5,62]);
+    addBarrier([.5,3.5,3.5],[-10.5,3.5,-58.5]); addBarrier([.5,3.5,3.5],[10.5,3.5,-58.5]);
+    addBarrier([.5,3.5,3.5],[-10.5,3.5,58.5]); addBarrier([.5,3.5,3.5],[10.5,3.5,58.5]);
+    addBarrier([38,1,55],[0,25,0],0x16344d,.12);
+
+    const railMat = new THREE.MeshStandardMaterial({ color:0x4f7894, emissive:0x16344d, emissiveIntensity:.6, metalness:.7, roughness:.25 });
+    for (const x of [-37.7,37.7]) { const rail=new THREE.Mesh(new THREE.BoxGeometry(.24,.28,108),railMat); rail.position.set(x,5,0); scene.add(rail); }
+    for (const z of [-54.7,54.7]) for (const x of [-27,27]) { const rail=new THREE.Mesh(new THREE.BoxGeometry(20,.28,.24),railMat); rail.position.set(x,5,z); scene.add(rail); }
+
+    const boostPads = [];
+    for (const [x,z] of [[0,0],[-24,-22],[24,-22],[-24,22],[24,22],[0,-39],[0,39],[-31,0],[31,0]]) {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.45,1.6,.12,18),new THREE.MeshStandardMaterial({color:0xffa226,emissive:0xff7a18,emissiveIntensity:1.5,metalness:.55,roughness:.25}));
+      mesh.position.set(x,.09,z); scene.add(mesh); boostPads.push({mesh,x,z,active:true,cooldown:0,spin:Math.random()*6});
+    }
 
     const input = {
       throttle: 0, steer: 0, pitch: 0, yaw: 0, roll: 0,
@@ -266,7 +294,7 @@
         this.wheelSpin = 0;
         this.jumpLatch = false;
       }
-      reset(x=0,z=28,yaw=0) {
+      reset(x=0,z=-28,yaw=Math.PI) {
         this.body.position.set(x,1.2,z); this.body.velocity.setZero(); this.body.angularVelocity.setZero(); this.body.force.setZero(); this.body.torque.setZero();
         this.body.quaternion.setFromEuler(0,yaw,0); this.boost = game.training ? 100 : Math.max(this.boost, 33); this.jumps = 0;
       }
@@ -276,15 +304,18 @@
         const right = b.quaternion.vmult(new CANNON.Vec3(1,0,0));
         const up = b.quaternion.vmult(new CANNON.Vec3(0,1,0));
         const ray = new CANNON.RaycastResult();
-        physics.raycastClosest(b.position, new CANNON.Vec3(b.position.x,b.position.y-1.15,b.position.z), { skipBackfaces: true }, ray);
+        const rayEnd = b.position.vadd(up.scale(-1.32));
+        physics.raycastClosest(b.position, rayEnd, { skipBackfaces: false }, ray);
         const wasGrounded = this.grounded;
-        this.grounded = ray.hasHit && ray.body === floorBody && up.y > .3;
+        this.grounded = ray.hasHit && arenaBodies.includes(ray.body);
+        this.groundNormal = this.grounded ? ray.hitNormalWorld.clone() : new CANNON.Vec3(0,1,0);
         if (this.grounded && !wasGrounded) this.jumps = 0;
         if (!this.grounded && wasGrounded) this.airStart = performance.now();
 
         if (this.grounded) {
-          const forwardFlat = new CANNON.Vec3(forward.x,0,forward.z); forwardFlat.normalize();
-          const rightFlat = new CANNON.Vec3(right.x,0,right.z); rightFlat.normalize();
+          const n=this.groundNormal;
+          const forwardFlat = forward.vsub(n.scale(forward.dot(n))); forwardFlat.normalize();
+          const rightFlat = right.vsub(n.scale(right.dot(n))); rightFlat.normalize();
           const fSpeed = b.velocity.dot(forwardFlat);
           const sSpeed = b.velocity.dot(rightFlat);
           const topSpeed = input.boost && this.boost > 0 ? 44 : 31;
@@ -296,8 +327,9 @@
           if (!input.throttle) { b.velocity.x *= .985; b.velocity.z *= .985; }
           const steerScale = THREE.MathUtils.clamp(Math.abs(fSpeed)/5, .15, 1) * (input.handbrake ? 1.5 : 1);
           b.angularVelocity.y += input.steer * 4.3 * steerScale * (fSpeed >= -.5 ? 1 : -1) * dt;
-          const align = new CANNON.Vec3(up.z * 9500, 0, -up.x * 9500);
-          b.torque.vadd(align, b.torque);
+          const alignAxis = up.cross(n);
+          b.torque.vadd(alignAxis.scale(13500), b.torque);
+          if (n.y < .75) b.applyForce(n.scale(-9200),b.position);
         } else {
           const torque = 5200;
           b.torque.vadd(right.scale(-input.pitch * torque), b.torque);
@@ -350,7 +382,65 @@
     function updateParticles(dt) { for (const p of boostParticles) if (p.mesh.visible) { p.life-=dt; if (p.life<=0) p.mesh.visible=false; else { p.mesh.position.addScaledVector(p.velocity,dt); p.mesh.scale.setScalar(p.life*2.4); p.mesh.material.opacity=p.life*2.6; } } }
 
     const car = new ArcadeCar();
-    const game = { active: false, training: false, ballCam: false, elapsed: 0 };
+
+    const ballMaterial = new CANNON.Material({ friction:.18, restitution:.82 });
+    const ballBody = new CANNON.Body({ mass:32, shape:new CANNON.Sphere(2), material:ballMaterial, position:new CANNON.Vec3(0,4,0), linearDamping:.045, angularDamping:.08 });
+    physics.addBody(ballBody);
+    const ballMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(2,2),[
+      new THREE.MeshStandardMaterial({color:0xeaf4f6,roughness:.48,metalness:.12}),
+      new THREE.MeshStandardMaterial({color:0x172738,roughness:.6,metalness:.08})
+    ]);
+    ballMesh.geometry.clearGroups();
+    for(let i=0;i<ballMesh.geometry.index.count/3;i++) ballMesh.geometry.addGroup(i*3,3,(i%5===0||i%11===0)?1:0);
+    ballMesh.castShadow=true; ballMesh.receiveShadow=true; scene.add(ballMesh);
+    window.olympicoBall = ballMesh;
+    ballMesh.add(new THREE.PointLight(0xbfeaff,5,12));
+
+    const game = { active: false, training: false, ballCam: false, elapsed: 0, time:300, blue:0, orange:0, overtime:false, resetUntil:0, ended:false };
+    function resetBall() { ballBody.position.set(0,4,0); ballBody.velocity.setZero(); ballBody.angularVelocity.setZero(); ballBody.force.setZero(); ballBody.torque.setZero(); }
+    function announce(text,color='#fff',duration=1400) {
+      const el=document.querySelector('#announcement'); el.textContent=text; el.style.color=color; el.classList.add('show');
+      clearTimeout(announce.timer); announce.timer=setTimeout(()=>el.classList.remove('show'),duration);
+    }
+    function registerGoal(team) {
+      if (game.resetUntil || game.ended) return;
+      game[team]++; document.querySelector(`#${team}Score`).textContent=game[team];
+      const origin=new CANNON.Vec3(0,3,team==='blue'?62:-62);
+      for(const vehicle of [car]) { const delta=vehicle.body.position.vsub(origin); const d=Math.max(delta.length(),3); if(d<38) vehicle.body.applyImpulse(delta.scale(28000/(d*d)),vehicle.body.position); }
+      resetBall(); car.reset();
+      announce(game.overtime?'GOLDEN GOAL!':'GOAL!',team==='blue'?'#51d5ff':'#ffc14d',1900);
+      if(game.overtime){game.ended=true; setTimeout(()=>endMatch(team),2100);} else game.resetUntil=performance.now()+2100;
+    }
+    function endMatch(winner) {
+      game.active=false; document.querySelector('#hud').classList.remove('visible'); document.querySelector('#menu').classList.remove('hidden');
+      showToast(`${winner==='blue'?'Blue':'Orange'} wins ${game.blue}–${game.orange}`);
+    }
+    function updateMatch(dt) {
+      ballBody.applyForce(new CANNON.Vec3(0,ballBody.mass*7.5,0),ballBody.position);
+      if (ballBody.position.y < -8) resetBall();
+      if (Math.abs(ballBody.position.x)<10.5 && ballBody.position.y<7.5) {
+        if(ballBody.position.z>56) registerGoal('blue'); else if(ballBody.position.z<-56) registerGoal('orange');
+      }
+      const now=performance.now();
+      if(game.resetUntil){if(now>=game.resetUntil){game.resetUntil=0;announce('KICKOFF','#ffffff',800);} return;}
+      if(!game.training&&!game.ended&&!game.overtime){
+        game.time=Math.max(0,game.time-dt);
+        if(game.time===0){if(game.blue===game.orange){game.overtime=true;announce('OVERTIME','#ffc14d',1800);}else{game.ended=true;setTimeout(()=>endMatch(game.blue>game.orange?'blue':'orange'),900);}}
+      }
+      for(const pad of boostPads){
+        pad.spin+=dt*1.7; pad.mesh.rotation.y=pad.spin;
+        if(!pad.active){pad.cooldown-=dt;if(pad.cooldown<=0){pad.active=true;pad.mesh.visible=true;}}
+        else if(Math.hypot(car.body.position.x-pad.x,car.body.position.z-pad.z)<2.5){car.boost=Math.min(100,car.boost+34);pad.active=false;pad.cooldown=5;pad.mesh.visible=false;}
+      }
+    }
+    function syncBallAndHud() {
+      ballMesh.position.copy(ballBody.position); ballMesh.quaternion.copy(ballBody.quaternion);
+      const clock=game.overtime?'OT':`${String(Math.floor(game.time/60)).padStart(2,'0')}:${String(Math.ceil(game.time%60)).padStart(2,'0')}`;
+      document.querySelector('#clock').textContent=clock;
+      const projected=ballMesh.position.clone().project(camera); const visible=projected.z>-1&&projected.z<1&&Math.abs(projected.x)<.92&&Math.abs(projected.y)<.88;
+      const indicator=document.querySelector('#ballIndicator'); indicator.style.display=visible?'none':'block';
+      if(!visible){const dx=projected.x,dy=-projected.y;const angle=Math.atan2(dy,dx)+Math.PI/2;const margin=45;const radius=Math.min(innerWidth,innerHeight)*.42;const x=innerWidth/2+Math.cos(angle-Math.PI/2)*radius;const y=innerHeight/2+Math.sin(angle-Math.PI/2)*radius;indicator.style.left=`${THREE.MathUtils.clamp(x,margin,innerWidth-margin)}px`;indicator.style.top=`${THREE.MathUtils.clamp(y,margin,innerHeight-margin)}px`;indicator.style.transform=`translate(-50%,-50%) rotate(${angle}rad)`;}
+    }
     const cameraLook = new THREE.Vector3();
     const cameraPos = new THREE.Vector3();
     function updateCamera(dt) {
@@ -377,8 +467,8 @@
       if (input.cameraToggleQueued && game.active) { game.ballCam=!game.ballCam; input.cameraToggleQueued=false; document.querySelector('#cameraMode').textContent=`${game.ballCam?'Ball':'Car'} cam · Tap Space / C`; }
       if (game.active) {
         accumulator += dt;
-        while (accumulator >= 1/60) { car.fixedUpdate(1/60); physics.step(1/60); accumulator -= 1/60; }
-        car.sync(dt); updateParticles(dt); updateCamera(dt);
+        while (accumulator >= 1/60) { car.fixedUpdate(1/60); updateMatch(1/60); physics.step(1/60); accumulator -= 1/60; }
+        car.sync(dt); syncBallAndHud(); updateParticles(dt); updateCamera(dt);
         const kph = Math.round(car.body.velocity.length()*3.6);
         document.querySelector('#speed').textContent=String(kph).padStart(3,'0');
         document.querySelector('#boostValue').textContent=Math.round(car.boost);
@@ -406,7 +496,9 @@
       if (button.dataset.action === 'quick-match') {
         document.querySelector('#menu').classList.add('hidden');
         document.querySelector('#hud').classList.add('visible');
-        game.active = true; game.training = false; car.reset(); cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,10));
+        Object.assign(game,{active:true,training:false,time:300,blue:0,orange:0,overtime:false,resetUntil:0,ended:false});
+        document.querySelector('#blueScore').textContent='0'; document.querySelector('#orangeScore').textContent='0';
+        resetBall(); car.reset(); cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,10));
         showToast('Kickoff! Tap Space for ball cam · Hold Space to powerslide');
       } else showToast('Coming online in the next build phase.');
     }));
