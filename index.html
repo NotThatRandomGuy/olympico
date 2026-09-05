@@ -650,7 +650,7 @@
     const remoteCars=new Map(), ghostCars=new Map();
     const neutralControls=()=>({throttle:0,steer:0,pitch:0,yaw:0,roll:0,boost:false,handbrake:false,jumpQueued:false});
     const network={
-      mode:'offline',peer:null,connections:new Map(),players:new Map(),localId:null,code:'',format:1,bots:true,snapshotAccum:0,inputAccum:0,closing:false,
+      mode:'offline',peer:null,connections:new Map(),players:new Map(),localId:null,code:'',format:1,bots:true,snapshotAccum:0,inputAccum:0,closing:false,lastBallHitSent:0,ballHitTimes:new Map(),
       profile:{username:'Driver',team:'blue'},
       makeCode(){const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';return Array.from({length:6},()=>chars[Math.floor(Math.random()*chars.length)]).join('');},
       assignTeam(team,exceptId){if(team==='spectate')return team;const safe=['blue','orange'].includes(team)?team:'blue';const count=[...this.players].filter(([id,p])=>id!==exceptId&&p.team===safe).length;return count<this.format?safe:'spectate';},
@@ -676,6 +676,7 @@
           if(data.t==='join'){this.players.set(conn.peer,{username:String(data.username||'Driver').slice(0,18),team:this.assignTeam(data.team,conn.peer),host:false});this.broadcastLobby();}
           else if(data.t==='team'&&this.players.has(conn.peer)){this.players.get(conn.peer).team=this.assignTeam(data.team,conn.peer);this.broadcastLobby();}
           else if(data.t==='input'){const remote=remoteCars.get(conn.peer);if(remote)Object.assign(remote.controls,data.input,{jumpQueued:data.input.jumpQueued||remote.controls.jumpQueued});}
+          else if(data.t==='ball-hit')this.applyRemoteBallHit(conn.peer,data);
         }else{
           if(data.t==='lobby'){this.players=new Map(data.players);this.format=data.format;this.bots=data.bots;const me=this.players.get(this.localId);if(me)this.profile.team=me.team;renderLobby();}
           else if(data.t==='start')this.startClientMatch(data);
@@ -700,10 +701,39 @@
       },
       startClientMatch(data){this.players=new Map(data.players);this.format=data.format;this.bots=data.bots;const me=this.players.get(this.localId);startGame({format:data.format,team:me?.team||'spectate',networked:true});clearGhostCars();ballBody.type=CANNON.Body.KINEMATIC;},
       preFixed(dt){if(this.mode==='host')for(const remote of remoteCars.values())remote.car.fixedUpdate(dt,remote.controls);},
+      sendClientBallHit(){
+        if(this.mode!=='client'||game.spectator||performance.now()-this.lastBallHitSent<110)return;
+        const toBall=ballBody.position.vsub(car.body.position),distance=toBall.length();
+        if(distance<.001||distance>4.55)return;
+        const normal=toBall.scale(1/distance);
+        const closingSpeed=car.body.velocity.vsub(ballBody.velocity).dot(normal);
+        if(closingSpeed<.8)return;
+        const conn=this.connections.get('host');
+        if(!conn?.open)return;
+        this.lastBallHitSent=performance.now();
+        conn.send({t:'ball-hit',speed:Math.min(closingSpeed,40)});
+        const predictedImpulse=Math.min(650,60+Math.min(closingSpeed,32)*42);
+        ballBody.velocity.vadd(normal.scale(predictedImpulse/ballBody.mass),ballBody.velocity);
+      },
+      applyRemoteBallHit(peerId,data){
+        const remote=remoteCars.get(peerId),now=performance.now();
+        if(!remote||ballBody.type!==CANNON.Body.DYNAMIC||now-(this.ballHitTimes.get(peerId)||0)<110)return;
+        const toBall=ballBody.position.vsub(remote.car.body.position),distance=toBall.length();
+        if(distance<.001||distance>6.25)return;
+        const normal=toBall.scale(1/distance);
+        const authoritativeSpeed=remote.car.body.velocity.vsub(ballBody.velocity).dot(normal);
+        const claimedSpeed=Number.isFinite(data.speed)?THREE.MathUtils.clamp(data.speed,0,40):0;
+        const impactSpeed=THREE.MathUtils.clamp(Math.max(authoritativeSpeed,Math.min(claimedSpeed,Math.max(0,authoritativeSpeed)+7)),0,32);
+        if(impactSpeed<.8)return;
+        const impulseStrength=Math.min(650,60+impactSpeed*42);
+        ballBody.applyImpulse(normal.scale(impulseStrength),ballBody.position);
+        ballBody.wakeUp();
+        this.ballHitTimes.set(peerId,now);
+      },
       tick(dt){
         if(!game.active)return;
         if(this.mode==='host'){this.snapshotAccum+=dt;if(this.snapshotAccum>=1/30){this.snapshotAccum=0;this.sendSnapshot();}}
-        else if(this.mode==='client'){this.inputAccum+=dt;if(this.inputAccum>=1/30){this.inputAccum=0;const c=this.connections.get('host');if(c?.open)c.send({t:'input',input:{throttle:input.throttle,steer:input.steer,pitch:input.pitch,yaw:input.yaw,roll:input.roll,boost:input.boost,handbrake:input.handbrake,jumpQueued:!!input.networkJumpQueued}});input.networkJumpQueued=false;}}
+        else if(this.mode==='client'){this.inputAccum+=dt;if(this.inputAccum>=1/30){this.inputAccum=0;this.sendClientBallHit();const c=this.connections.get('host');if(c?.open)c.send({t:'input',input:{throttle:input.throttle,steer:input.steer,pitch:input.pitch,yaw:input.yaw,roll:input.roll,boost:input.boost,handbrake:input.handbrake,jumpQueued:!!input.networkJumpQueued}});input.networkJumpQueued=false;}}
       },
       sendSnapshot(){
         const pack=(id,vehicle)=>({id,team:vehicle.team,p:[vehicle.body.position.x,vehicle.body.position.y,vehicle.body.position.z],q:[vehicle.body.quaternion.x,vehicle.body.quaternion.y,vehicle.body.quaternion.z,vehicle.body.quaternion.w],v:[vehicle.body.velocity.x,vehicle.body.velocity.y,vehicle.body.velocity.z],w:[vehicle.body.angularVelocity.x,vehicle.body.angularVelocity.y,vehicle.body.angularVelocity.z]});
@@ -717,7 +747,7 @@
         for(const [id,ghost]of ghostCars)if(!seen.has(id)){scene.remove(ghost.visual.root);ghostCars.delete(id);}
       },
       leave(){this.cleanup();clearRemoteCars();clearGhostCars();if(game.active)exitToMenu();document.querySelector('#multiplayer').classList.add('hidden');document.querySelector('.connect-only').hidden=false;document.querySelector('.lobby-only').hidden=true;},
-      cleanup(){this.closing=true;try{this.peer?.destroy();}catch{}this.peer=null;this.connections.clear();this.players.clear();this.mode='offline';this.localId=null;}
+      cleanup(){this.closing=true;try{this.peer?.destroy();}catch{}this.peer=null;this.connections.clear();this.players.clear();this.ballHitTimes.clear();this.lastBallHitSent=0;this.mode='offline';this.localId=null;}
     };
     function clearRemoteCars(){for(const r of remoteCars.values()){physics.removeBody(r.car.body);scene.remove(r.car.visual.root);}remoteCars.clear();}
     function clearGhostCars(){for(const g of ghostCars.values())scene.remove(g.visual.root);ghostCars.clear();}
@@ -733,11 +763,16 @@
       const carForward = new THREE.Vector3(0,0,-1).applyQuaternion(car.visual.root.quaternion);
       const planar = new THREE.Vector3(carForward.x,0,carForward.z);
       if (planar.lengthSq() < .01) planar.set(0,0,-1); else planar.normalize();
-      const desired = carPos.clone().addScaledVector(planar,-10.5).add(new THREE.Vector3(0,4.8,0));
-      cameraPos.lerp(desired, 1-Math.exp(-dt*7));
+      if(game.ballCam&&window.olympicoBall){
+        cameraLook.copy(window.olympicoBall.position);
+        const ballBearing=cameraLook.clone().sub(carPos);ballBearing.y=0;
+        if(ballBearing.lengthSq()<.01)ballBearing.copy(planar);else ballBearing.normalize();
+        cameraPos.copy(carPos).addScaledVector(ballBearing,-10.5).add(new THREE.Vector3(0,4.8,0));
+      }else{
+        cameraPos.copy(carPos).addScaledVector(planar,-10.5).add(new THREE.Vector3(0,4.8,0));
+        cameraLook.copy(carPos).addScaledVector(planar,8).add(new THREE.Vector3(0,1.2,0));
+      }
       camera.position.copy(cameraPos);
-      const target = game.ballCam && window.olympicoBall ? window.olympicoBall.position : carPos.clone().addScaledVector(planar,8).add(new THREE.Vector3(0,1.2,0));
-      cameraLook.lerp(target,1-Math.exp(-dt*8));
       camera.up.set(0,1,0);
       camera.lookAt(cameraLook);
     }
