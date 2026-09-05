@@ -45,6 +45,30 @@
     .action small { color: var(--muted); font-size: .68rem; letter-spacing: .08em; }
     .footer-note { margin-top: 22px; display: flex; gap: 18px; color: #6e849a; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; }
     .key { display: inline-grid; place-items: center; min-width: 25px; height: 22px; padding: 0 6px; margin-right: 5px; color: #dceeff; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.13); border-bottom-width: 2px; border-radius: 4px; font-size: .68rem; font-weight: 800; }
+    .dialog-screen { background: rgba(2,7,14,.82); backdrop-filter: blur(14px); }
+    .dialog-card { width:min(680px,100%); max-height:min(760px,calc(100vh - 32px)); overflow:auto; padding:clamp(24px,4vw,42px); background:var(--panel-strong); border:1px solid var(--line); box-shadow:0 30px 80px rgba(0,0,0,.52); clip-path:polygon(0 0,96% 0,100% 5%,100% 100%,4% 100%,0 95%); }
+    .dialog-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; margin-bottom:28px; }
+    .dialog-head h2 { margin:4px 0 0; font-family:var(--display); font-size:clamp(2.4rem,7vw,4rem); font-style:italic; line-height:.95; text-transform:uppercase; letter-spacing:-.035em; }
+    .icon-btn { width:42px; height:42px; flex:0 0 auto; border:1px solid var(--line); background:rgba(255,255,255,.04); cursor:pointer; font-size:1.25rem; }
+    .icon-btn:hover,.icon-btn:focus-visible { outline:none; border-color:var(--blue-hot); background:rgba(22,168,255,.13); }
+    .section-label { margin:22px 0 10px; color:var(--muted); font-size:.7rem; font-weight:850; letter-spacing:.18em; text-transform:uppercase; }
+    .choice-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:9px; }
+    .choice-grid.three { grid-template-columns:repeat(3,1fr); }
+    .choice { min-height:68px; padding:12px; color:#b9cad9; border:1px solid var(--line); background:rgba(255,255,255,.025); cursor:pointer; font-size:.78rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
+    .choice:hover,.choice:focus-visible { border-color:rgba(81,213,255,.55); outline:none; }
+    .choice.selected { color:white; border-color:var(--blue-hot); background:linear-gradient(145deg,rgba(22,168,255,.25),rgba(22,168,255,.06)); box-shadow:inset 0 -3px var(--blue); }
+    .choice.orange.selected { border-color:var(--orange-hot); background:linear-gradient(145deg,rgba(255,122,24,.25),rgba(255,122,24,.06)); box-shadow:inset 0 -3px var(--orange); }
+    .choice strong { display:block; margin-bottom:5px; color:inherit; font-size:1.1rem; }
+    .dialog-footer { display:flex; justify-content:flex-end; gap:10px; margin-top:28px; }
+    .cta { min-height:50px; padding:0 22px; border:1px solid rgba(81,213,255,.55); background:linear-gradient(110deg,#0879df,#13b6ee); cursor:pointer; font-weight:900; letter-spacing:.1em; text-transform:uppercase; box-shadow:0 8px 24px rgba(0,138,238,.2); }
+    .cta.secondary { color:#b9cad9; border-color:var(--line); background:rgba(255,255,255,.04); box-shadow:none; }
+    .cta:hover,.cta:focus-visible { filter:brightness(1.12); outline:2px solid rgba(255,255,255,.32); outline-offset:2px; }
+    .garage-summary { display:grid; grid-template-columns:1fr auto; align-items:center; gap:20px; min-height:92px; padding:18px; border-left:3px solid var(--blue); background:linear-gradient(90deg,rgba(22,168,255,.1),transparent); }
+    .garage-summary strong { display:block; font-family:var(--display); font-size:1.55rem; text-transform:uppercase; }
+    .paint-swatch { width:52px; height:52px; border-radius:50%; background:var(--blue); box-shadow:0 0 24px rgba(22,168,255,.5); }
+    #pauseMenu { background:rgba(2,7,14,.56); }
+    #pauseMenu .dialog-card { width:min(410px,100%); }
+    #pauseMenu .menu-actions { margin-top:22px; }
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; opacity: 0; transition: opacity .25s; }
     #hud.visible { opacity: 1; }
     .scoreboard { position: absolute; left: 50%; top: max(15px, env(safe-area-inset-top)); transform: translateX(-50%); display: grid; grid-template-columns: 82px 110px 82px; height: 54px; filter: drop-shadow(0 8px 18px rgba(0,0,0,.35)); }
@@ -80,6 +104,9 @@
       .boost-label { bottom: 14px; }
       .speed { right: 90px; bottom: 15px; font-size: 1.5rem; }
       .mode-pill { bottom: 18px; font-size: .58rem; }
+      .choice-grid,.choice-grid.three { grid-template-columns:repeat(2,1fr); }
+      .dialog-footer { flex-direction:column-reverse; }
+      .cta { width:100%; }
     }
   </style>
   <script type="importmap">
@@ -106,6 +133,37 @@
       <div class="footer-note"><span><b class="key">WASD</b> Drive</span><span><b class="key">J</b> Jump</span><span><b class="key">Shift</b> Boost</span></div>
     </section>
   </main>
+
+  <section id="matchSetup" class="screen dialog-screen hidden" role="dialog" aria-modal="true" aria-labelledby="matchSetupTitle">
+    <div class="dialog-card">
+      <header class="dialog-head"><div><div class="eyebrow">Single player</div><h2 id="matchSetupTitle">Match setup</h2></div><button class="icon-btn" data-close aria-label="Close">×</button></header>
+      <div class="section-label">Team format</div>
+      <div class="choice-grid" id="formatChoices">
+        <button class="choice selected" data-format="1"><strong>1v1</strong>Duel</button><button class="choice" data-format="2"><strong>2v2</strong>Doubles</button><button class="choice" data-format="3"><strong>3v3</strong>Standard</button><button class="choice" data-format="4"><strong>4v4</strong>Chaos</button>
+      </div>
+      <div class="section-label">Your team</div>
+      <div class="choice-grid three" id="teamChoices"><button class="choice selected" data-team="blue">Blue</button><button class="choice orange" data-team="orange">Orange</button><button class="choice" data-team="spectate" disabled title="Spectating is available in multiplayer">Spectate</button></div>
+      <div class="dialog-footer"><button class="cta secondary" data-close>Back</button><button class="cta" id="startSolo">Start match</button></div>
+    </div>
+  </section>
+
+  <section id="garage" class="screen dialog-screen hidden" role="dialog" aria-modal="true" aria-labelledby="garageTitle">
+    <div class="dialog-card">
+      <header class="dialog-head"><div><div class="eyebrow">Cosmetics only</div><h2 id="garageTitle">Garage</h2></div><button class="icon-btn" data-close aria-label="Close">×</button></header>
+      <div class="garage-summary"><div><span class="section-label">Current build</span><strong id="buildName">Compact · Standard</strong></div><div class="paint-swatch" id="paintSwatch"></div></div>
+      <div class="section-label">Body type</div>
+      <div class="choice-grid three" id="bodyChoices"><button class="choice selected" data-body="compact"><strong>Compact</strong>Balanced silhouette</button><button class="choice" data-body="truck"><strong>SUV</strong>Tall &amp; rugged</button><button class="choice" data-body="hyper"><strong>Hypercar</strong>Low profile</button></div>
+      <div class="section-label">Wheel shape</div>
+      <div class="choice-grid three" id="wheelChoices"><button class="choice selected" data-wheel="round"><strong>Round</strong>Standard</button><button class="choice" data-wheel="square"><strong>Square</strong>Block party</button><button class="choice" data-wheel="triangle"><strong>Triangle</strong>Tri-spoke</button></div>
+      <div class="section-label">Team paint</div>
+      <div class="choice-grid three" id="paintChoices"><button class="choice selected" data-paint="blue">Saturated blue</button><button class="choice orange" data-paint="orange">Bright orange</button><button class="choice" data-paint="auto">Match team</button></div>
+      <div class="dialog-footer"><button class="cta" data-close>Save build</button></div>
+    </div>
+  </section>
+
+  <section id="pauseMenu" class="screen dialog-screen hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+    <div class="dialog-card"><div class="eyebrow">Match paused</div><h2 id="pauseTitle" class="brand" style="font-size:3.8rem;margin-bottom:22px">Olympico</h2><div class="menu-actions"><button class="action primary" id="resumeGame">Resume</button><button class="action" id="restartGame">Restart match</button><button class="action" id="exitGame">Exit to menu</button></div></div>
+  </section>
 
   <section id="hud" aria-label="Match HUD">
     <div class="scoreboard"><div class="score blue"><span id="blueScore">0</span></div><div class="clock" id="clock">05:00</div><div class="score orange"><span id="orangeScore">0</span></div></div>
@@ -246,6 +304,8 @@
       if ((e.code === 'KeyJ' || e.code === 'Numpad0') && !e.repeat) input.jumpQueued = true;
       if (e.code === 'Space' && !e.repeat) input.spaceStarted = performance.now();
       if (e.code === 'KeyC' && !e.repeat) input.cameraToggleQueued = true;
+      if (e.code === 'KeyR' && game?.active && game.training) { resetBall(); showToast('Ball reset'); }
+      if (e.code === 'Escape' && game?.active && !e.repeat) togglePause();
     });
     addEventListener('keyup', e => {
       input.keys.delete(e.code);
@@ -253,18 +313,26 @@
     });
     canvas.addEventListener('mousedown', e => { if (e.button === 0 && game.active) input.jumpQueued = true; });
 
-    function makeCarVisual(color = 0x16a8ff) {
+    const savedCosmetics = JSON.parse(localStorage.getItem('olympico.cosmetics') || '{}');
+    const cosmetics = { body:savedCosmetics.body||'compact', wheel:savedCosmetics.wheel||'round', paint:savedCosmetics.paint||'auto' };
+    function makeCarVisual(color = 0x16a8ff, bodyType=cosmetics.body, wheelType=cosmetics.wheel) {
       const root = new THREE.Group();
       const paint = new THREE.MeshStandardMaterial({ color, metalness: .62, roughness: .24 });
       const trim = new THREE.MeshStandardMaterial({ color: 0x09121d, metalness: .75, roughness: .3 });
       const glass = new THREE.MeshStandardMaterial({ color: 0x84d8ff, metalness: .65, roughness: .12, transparent: true, opacity: .78 });
-      const lower = new THREE.Mesh(new THREE.BoxGeometry(2.65, .72, 4.25), paint); lower.position.y = .08; lower.castShadow = true; root.add(lower);
-      const hood = new THREE.Mesh(new THREE.BoxGeometry(2.48, .33, 1.25), paint); hood.position.set(0,.56,-1.18); hood.rotation.x = -.08; hood.castShadow = true; root.add(hood);
-      const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.14, .78, 1.72), glass); cabin.position.set(0,.8,.22); cabin.rotation.x = -.04; cabin.castShadow = true; root.add(cabin);
+      const profile = bodyType==='truck'
+        ? {lower:[2.72,.94,4.18,.18],hood:[2.52,.5,1.3,.78,-1.2],cabin:[2.38,1.15,1.9,1.12,.25]}
+        : bodyType==='hyper'
+          ? {lower:[2.82,.5,4.52,-.02],hood:[2.67,.24,1.55,.38,-1.25],cabin:[2.12,.52,1.72,.55,.28]}
+          : {lower:[2.65,.72,4.25,.08],hood:[2.48,.33,1.25,.56,-1.18],cabin:[2.14,.78,1.72,.8,.22]};
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(...profile.lower.slice(0,3)), paint); lower.position.y = profile.lower[3]; lower.castShadow = true; root.add(lower);
+      const hood = new THREE.Mesh(new THREE.BoxGeometry(...profile.hood.slice(0,3)), paint); hood.position.set(0,profile.hood[3],profile.hood[4]); hood.rotation.x = -.08; hood.castShadow = true; root.add(hood);
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(...profile.cabin.slice(0,3)), glass); cabin.position.set(0,profile.cabin[3],profile.cabin[4]); cabin.rotation.x = -.04; cabin.castShadow = true; root.add(cabin);
       const spoiler = new THREE.Mesh(new THREE.BoxGeometry(2.75,.14,.48), trim); spoiler.position.set(0,.72,1.88); root.add(spoiler);
       const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.72,.28,.22), trim); bumper.position.set(0,-.2,-2.14); root.add(bumper);
       const wheels = [];
-      const wheelGeo = new THREE.CylinderGeometry(.53,.53,.34,18); wheelGeo.rotateZ(Math.PI/2);
+      const wheelGeo = wheelType==='square' ? new THREE.BoxGeometry(.34,.94,.94) : new THREE.CylinderGeometry(.53,.53,.34,wheelType==='triangle'?3:18);
+      if(wheelType!=='square') wheelGeo.rotateZ(Math.PI/2);
       for (const x of [-1.38,1.38]) for (const z of [-1.36,1.36]) {
         const pivot = new THREE.Group(); pivot.position.set(x,-.42,z);
         const wheel = new THREE.Mesh(wheelGeo, trim); wheel.castShadow = true; pivot.add(wheel); root.add(pivot); wheels.push({ pivot, wheel, front: z < 0 });
@@ -382,6 +450,15 @@
     function updateParticles(dt) { for (const p of boostParticles) if (p.mesh.visible) { p.life-=dt; if (p.life<=0) p.mesh.visible=false; else { p.mesh.position.addScaledVector(p.velocity,dt); p.mesh.scale.setScalar(p.life*2.4); p.mesh.material.opacity=p.life*2.6; } } }
 
     const car = new ArcadeCar();
+    function applyCosmetics(team=game?.team||'blue') {
+      const color = cosmetics.paint==='orange'||(cosmetics.paint==='auto'&&team==='orange') ? 0xff7a18 : 0x16a8ff;
+      const old=car.visual; scene.remove(old.root); old.root.traverse(o=>{if(o.geometry)o.geometry.dispose();});
+      car.visual=makeCarVisual(color,cosmetics.body,cosmetics.wheel); scene.add(car.visual.root);
+      localStorage.setItem('olympico.cosmetics',JSON.stringify(cosmetics));
+      const names={compact:'Compact',truck:'SUV',hyper:'Hypercar',round:'Standard',square:'Square',triangle:'Triangle'};
+      document.querySelector('#buildName').textContent=`${names[cosmetics.body]} · ${names[cosmetics.wheel]}`;
+      document.querySelector('#paintSwatch').style.background=color===0xff7a18?'var(--orange)':'var(--blue)';
+    }
 
     const ballMaterial = new CANNON.Material({ friction:.18, restitution:.82 });
     const ballBody = new CANNON.Body({ mass:32, shape:new CANNON.Sphere(2), material:ballMaterial, position:new CANNON.Vec3(0,4,0), linearDamping:.045, angularDamping:.08 });
@@ -396,7 +473,7 @@
     window.olympicoBall = ballMesh;
     ballMesh.add(new THREE.PointLight(0xbfeaff,5,12));
 
-    const game = { active: false, training: false, ballCam: false, elapsed: 0, time:300, blue:0, orange:0, overtime:false, resetUntil:0, ended:false };
+    const game = { active: false, paused:false, training: false, ballCam: false, elapsed: 0, time:300, blue:0, orange:0, overtime:false, resetUntil:0, ended:false, format:1, team:'blue' };
     function resetBall() { ballBody.position.set(0,4,0); ballBody.velocity.setZero(); ballBody.angularVelocity.setZero(); ballBody.force.setZero(); ballBody.torque.setZero(); }
     function announce(text,color='#fff',duration=1400) {
       const el=document.querySelector('#announcement'); el.textContent=text; el.style.color=color; el.classList.add('show');
@@ -435,7 +512,7 @@
     }
     function syncBallAndHud() {
       ballMesh.position.copy(ballBody.position); ballMesh.quaternion.copy(ballBody.quaternion);
-      const clock=game.overtime?'OT':`${String(Math.floor(game.time/60)).padStart(2,'0')}:${String(Math.ceil(game.time%60)).padStart(2,'0')}`;
+      const clock=game.training?'∞':game.overtime?'OT':`${String(Math.floor(game.time/60)).padStart(2,'0')}:${String(Math.ceil(game.time%60)).padStart(2,'0')}`;
       document.querySelector('#clock').textContent=clock;
       const projected=ballMesh.position.clone().project(camera); const visible=projected.z>-1&&projected.z<1&&Math.abs(projected.x)<.92&&Math.abs(projected.y)<.88;
       const indicator=document.querySelector('#ballIndicator'); indicator.style.display=visible?'none':'block';
@@ -466,8 +543,7 @@
       input.poll();
       if (input.cameraToggleQueued && game.active) { game.ballCam=!game.ballCam; input.cameraToggleQueued=false; document.querySelector('#cameraMode').textContent=`${game.ballCam?'Ball':'Car'} cam · Tap Space / C`; }
       if (game.active) {
-        accumulator += dt;
-        while (accumulator >= 1/60) { car.fixedUpdate(1/60); updateMatch(1/60); physics.step(1/60); accumulator -= 1/60; }
+        if(!game.paused){accumulator += dt; while (accumulator >= 1/60) { car.fixedUpdate(1/60); updateMatch(1/60); physics.step(1/60); accumulator -= 1/60; }}
         car.sync(dt); syncBallAndHud(); updateParticles(dt); updateCamera(dt);
         const kph = Math.round(car.body.velocity.length()*3.6);
         document.querySelector('#speed').textContent=String(kph).padStart(3,'0');
@@ -492,15 +568,47 @@
     const toast = document.querySelector('#toast');
     let toastTimer;
     function showToast(message) { toast.textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 2200); }
+    function openDialog(id) { document.querySelector(id).classList.remove('hidden'); document.querySelector(id).querySelector('button')?.focus(); }
+    function startGame({training=false,format=1,team='blue'}={}) {
+      document.querySelectorAll('.screen').forEach(s=>s.classList.add('hidden'));
+      document.querySelector('#hud').classList.add('visible');
+      Object.assign(game,{active:true,paused:false,training,time:300,blue:0,orange:0,overtime:false,resetUntil:0,ended:false,format,team});
+      document.querySelector('#blueScore').textContent='0'; document.querySelector('#orangeScore').textContent='0';
+      resetBall(); car.boost=100; car.reset(0,team==='orange'?28:-28,team==='orange'?0:Math.PI); applyCosmetics(team);
+      cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,team==='orange'?10:-10));
+      announce(training?'TRAINING':'KICKOFF',training?'#baff41':'#ffffff',900);
+      showToast(training?'Infinite boost · R resets the ball':'Tap Space for ball cam · Hold Space to powerslide');
+    }
+    function togglePause(force) {
+      if(!game.active)return; game.paused=typeof force==='boolean'?force:!game.paused;
+      document.querySelector('#pauseMenu').classList.toggle('hidden',!game.paused);
+      if(game.paused) input.keys.clear();
+    }
+    function exitToMenu(){game.active=false;game.paused=false;document.querySelector('#pauseMenu').classList.add('hidden');document.querySelector('#hud').classList.remove('visible');document.querySelector('#menu').classList.remove('hidden');}
+    document.querySelectorAll('[data-close]').forEach(button=>button.addEventListener('click',()=>button.closest('.screen').classList.add('hidden')));
+    function wireChoices(containerId,key) {
+      const box=document.querySelector(containerId);
+      box.querySelectorAll(`[data-${key}]`).forEach(button=>button.addEventListener('click',()=>{
+        if(button.disabled)return; box.querySelectorAll('.choice').forEach(b=>b.classList.remove('selected'));button.classList.add('selected');
+        if(key==='format') game.format=Number(button.dataset.format);
+        if(key==='team') game.team=button.dataset.team;
+        if(key==='body'||key==='wheel'||key==='paint'){cosmetics[key]=button.dataset[key];applyCosmetics(game.team);}
+      }));
+    }
+    wireChoices('#formatChoices','format'); wireChoices('#teamChoices','team'); wireChoices('#bodyChoices','body'); wireChoices('#wheelChoices','wheel'); wireChoices('#paintChoices','paint');
+    for(const [key,value] of Object.entries(cosmetics)){const box=document.querySelector(`#${key==='paint'?'paint':key}Choices`);box?.querySelectorAll('.choice').forEach(b=>b.classList.toggle('selected',b.dataset[key]===value));}
+    applyCosmetics('blue');
+    document.querySelector('#startSolo').addEventListener('click',()=>startGame({format:game.format,team:game.team}));
+    document.querySelector('#resumeGame').addEventListener('click',()=>togglePause(false));
+    document.querySelector('#restartGame').addEventListener('click',()=>startGame({training:game.training,format:game.format,team:game.team}));
+    document.querySelector('#exitGame').addEventListener('click',exitToMenu);
     document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
-      if (button.dataset.action === 'quick-match') {
-        document.querySelector('#menu').classList.add('hidden');
-        document.querySelector('#hud').classList.add('visible');
-        Object.assign(game,{active:true,training:false,time:300,blue:0,orange:0,overtime:false,resetUntil:0,ended:false});
-        document.querySelector('#blueScore').textContent='0'; document.querySelector('#orangeScore').textContent='0';
-        resetBall(); car.reset(); cameraPos.copy(car.visual.root.position).add(new THREE.Vector3(0,5,10));
-        showToast('Kickoff! Tap Space for ball cam · Hold Space to powerslide');
-      } else showToast('Coming online in the next build phase.');
+      const action=button.dataset.action;
+      if(action==='quick-match') startGame({format:1,team:'blue'});
+      else if(action==='single-player') openDialog('#matchSetup');
+      else if(action==='training') startGame({training:true,format:1,team:'blue'});
+      else if(action==='garage') openDialog('#garage');
+      else showToast('Direct Connect arrives in the networking phase.');
     }));
   </script>
 </body>
